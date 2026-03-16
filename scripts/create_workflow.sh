@@ -86,12 +86,10 @@ WORKFLOW_PAYLOAD=$(cat <<EOF
       "action": "dynatrace.site.reliability.guardian:validate-guardian-action",
       "active": true,
       "input": {
-        "executableId": "${DT_GUARDIAN_ID}",
+        "objectId": "${DT_GUARDIAN_ID}",
         "timeframeInputType": "expression",
-        "executionRequestParameters": {
-          "timeframeStart": "now()-1h",
-          "timeframeEnd": "now()"
-        }
+        "expressionTo": "{{ now() }}",
+        "expressionFrom": "{{ now() - duration('PT1H') }}"
       },
       "position": { "x": 0, "y": 1 },
       "conditions": {
