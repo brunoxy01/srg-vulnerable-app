@@ -125,14 +125,21 @@ It automatically discovers Docker containers and scans Node.js processes for CVE
 
 ---
 
-## Step 3 — Create the Dynatrace OAuth2 Client
+## Step 3 — Criar o OAuth2 Client no Dynatrace
 
-The scripts need an OAuth2 client to authenticate with the Dynatrace APIs.
+No **novo Dynatrace Platform** (SaaS Gen 3), os OAuth clients ficam no **Account Management** — fora da tenant, no portal de conta.
 
-1. Open: <https://fov31014.apps.dynatrace.com/ui/apps/dynatrace.classic.settings/settings/oauth-client-management>
-2. Click **Create client**.
-3. Name: `srg-security-gate`
-4. Enable these **scopes**:
+1. Acesse o **Account Management**:
+   <https://myaccount.dynatrace.com/iam/oauth-clients>
+   *(login com a mesma conta da sua tenant)*
+
+2. Clique em **Create client**.
+
+3. Preencha:
+   - **Name:** `srg-security-gate`
+   - **Account:** selecione sua conta
+
+4. Ative os **scopes** (permissões):
    - `automation:workflows:read`
    - `automation:workflows:write`
    - `automation:workflows:run`
@@ -140,12 +147,18 @@ The scripts need an OAuth2 client to authenticate with the Dynatrace APIs.
    - `srg:guardians:write`
    - `security:findings:read`
    - `openpipeline:events:ingest`
-5. Save and copy the **Client ID** and **Client Secret**.
-6. Add them to your `.env` file:
+
+5. Clique em **Save**. O Dynatrace exibe o **Client ID** e **Client Secret** uma única vez — copie os dois imediatamente.
+
+   > O Client ID começa com `dt0s02.` e o Secret tem o formato `dt0s02.XXXX.XXXX`.
+
+6. Adicione ao seu `.env`:
    ```
    DT_CLIENT_ID=dt0s02.XXXXXXXXX
    DT_CLIENT_SECRET=dt0s02.XXXXXXXXX.XXXXXXXX
    ```
+
+> **Alternativa:** em algumas tenants você encontra os OAuth clients em **Settings → Connections → OAuth clients** dentro da própria tenant. Se não aparecer, use o Account Management acima.
 
 ---
 
@@ -187,31 +200,52 @@ Verify in the UI:
 
 ---
 
-## Step 5 — Configure GitHub Actions Secrets
+## Step 5 — Configurar o Self-Hosted Runner no GitHub
 
-Go to your GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**:
+O pipeline usa um **self-hosted runner** para o job de deploy. Isso significa que a própria máquina onde o **Dynatrace OneAgent + Docker** estão instalados vira o executor do GitHub Actions — sem SSH, sem IP fixo, sem segredo de endereço.
 
-| Secret | Description |
-|--------|-------------|
-| `DOCKER_USERNAME` | Your GitHub username (`brunoxy01`) |
-| `DOCKER_PASSWORD` | GitHub PAT with `write:packages` scope |
-| `DEPLOY_HOST` | SSH IP/hostname of your server |
-| `DEPLOY_USER` | SSH username on that server |
-| `DEPLOY_SSH_KEY` | Full PEM content of your SSH private key |
-| `DT_CLIENT_ID` | From Step 3 |
-| `DT_CLIENT_SECRET` | From Step 3 |
-| `DT_WORKFLOW_ID` | From Step 4 output |
+### Por que self-hosted runner?
 
-> **No remote server yet?** You can test the SRG scripts locally without SSH:
-> ```bash
-> export DT_CLIENT_ID=...
-> export DT_CLIENT_SECRET=...
-> export DT_WORKFLOW_ID=...
-> export DT_TENANT_URL=https://fov31014.apps.dynatrace.com
->
-> ./scripts/trigger_validation.sh
-> ./scripts/check_validation.sh
-> ```
+```
+[GitHub Actions Cloud]     [Sua máquina local / VM]
+  job: build  ──────►  job: deploy  (roda aqui!)
+  (ubuntu-latest)       (self-hosted runner)
+                         ↑
+                   OneAgent instalado aqui
+                   monitora o container
+                   AppSec detecta os CVEs
+```
+
+O runner cloud (`ubuntu-latest`) é efêmero e não tem OneAgent — por isso o deploy precisa rodar na máquina que você controla.
+
+### Instalando o runner na sua máquina
+
+1. No GitHub, vá em: **Settings → Actions → Runners → New self-hosted runner**
+2. Selecione **Linux**
+3. Copie e execute os comandos gerados na **sua máquina** (onde já tem Docker e OneAgent):
+   ```bash
+   # Exemplo dos comandos gerados pelo GitHub:
+   mkdir actions-runner && cd actions-runner
+   curl -o actions-runner-linux-x64-2.x.x.tar.gz -L https://github.com/actions/runner/releases/download/...
+   tar xzf ./actions-runner-linux-x64-2.x.x.tar.gz
+   ./config.sh --url https://github.com/brunoxy01/srg-vulnerable-app --token SEU_TOKEN
+   ./run.sh
+   ```
+4. O runner aparece como **Online** no GitHub com a label `self-hosted, linux`.
+
+### Secrets necessários (apenas 5 — sem SSH!)
+
+GitHub → **Settings → Secrets and variables → Actions → New repository secret**:
+
+| Secret | Valor | Como obter |
+|--------|-------|------------|
+| `DOCKER_USERNAME` | `brunoxy01` | Seu username do GitHub |
+| `DOCKER_PASSWORD` | `ghp_...` | GitHub → Settings → Developer settings → Personal access tokens → **write:packages** |
+| `DT_CLIENT_ID` | `dt0s02.XXX` | Account Management → OAuth clients (Step 3) |
+| `DT_CLIENT_SECRET` | `dt0s02.XXX.XXX` | Account Management → OAuth clients (Step 3) |
+| `DT_WORKFLOW_ID` | `uuid` | Saída do `./scripts/setup_dynatrace.sh` (Step 4) |
+
+> **Não precisa mais de** `DEPLOY_HOST`, `DEPLOY_USER` nem `DEPLOY_SSH_KEY` — o runner roda o `docker compose up` diretamente na própria máquina.
 
 ---
 

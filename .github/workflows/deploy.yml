@@ -1,21 +1,28 @@
 name: Build, Deploy & SRG Security Gate
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Pipeline flow:
-#  1. build    → Build Docker image, push to GHCR
-#  2. deploy   → SSH to server, docker compose up (with new image)
-#  3. security → Trigger Dynatrace SRG Guardian validation
-#                Block the deploy if critical/high vulnerabilities are found
+# Arquitetura do pipeline:
 #
-# Required GitHub Secrets:
-#   DOCKER_USERNAME     GHCR username (your GitHub username)
-#   DOCKER_PASSWORD     GHCR token (GitHub PAT with write:packages scope)
-#   DEPLOY_HOST         SSH hostname / IP of your deploy server
-#   DEPLOY_USER         SSH user on the deploy server
-#   DEPLOY_SSH_KEY      Private SSH key (paste the full PEM content)
-#   DT_CLIENT_ID        Dynatrace OAuth2 client ID
-#   DT_CLIENT_SECRET    Dynatrace OAuth2 client secret
-#   DT_WORKFLOW_ID      Dynatrace Automation Workflow ID (from setup_dynatrace.sh)
+#   [ubuntu-latest]        [self-hosted runner]         [Dynatrace]
+#   build ──────────────► deploy ──────────────────────► security-gate
+#   (GHCR push)            (docker compose up           (SRG Guardian valida
+#                           na própria máquina)          → bloqueia se vulns)
+#
+# O job "deploy" roda num SELF-HOSTED RUNNER — a máquina onde o Dynatrace
+# OneAgent está instalado. Assim o OneAgent monitora o container em tempo real
+# e o Application Security detecta os CVEs. Não é necessário IP fixo,
+# SSH externo nem segredo de deploy.
+#
+# Como configurar o self-hosted runner:
+#   GitHub → Settings → Actions → Runners → New self-hosted runner
+#   Execute o script gerado na máquina que tem OneAgent + Docker instalados.
+#
+# Secrets necessários (apenas 4):
+#   DOCKER_USERNAME     seu username do GitHub (ex: brunoxy01)
+#   DOCKER_PASSWORD     GitHub PAT com escopo write:packages
+#   DT_CLIENT_ID        OAuth2 client ID do Dynatrace
+#   DT_CLIENT_SECRET    OAuth2 client secret do Dynatrace
+#   DT_WORKFLOW_ID      ID do Workflow criado por setup_dynatrace.sh
 # ──────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -26,14 +33,14 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY:    ghcr.io
-  IMAGE_NAME:  ghcr.io/brunoxy01/srg-vulnerable-app
+  REGISTRY:      ghcr.io
+  IMAGE_NAME:    ghcr.io/brunoxy01/srg-vulnerable-app
   DT_TENANT_URL: https://fov31014.apps.dynatrace.com
 
 # ─────────────────────────────────────────────────────────────────────────────
 jobs:
 
-  # ── 1. Build & Push ─────────────────────────────────────────────────────────
+  # ── 1. Build & Push (runner cloud do GitHub) ─────────────────────────────
   build:
     name: Build Docker Image
     runs-on: ubuntu-latest
@@ -76,10 +83,14 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
           cache-to:   type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
 
-  # ── 2. Deploy via SSH + Docker Compose ──────────────────────────────────────
+  # ── 2. Deploy (self-hosted runner — máquina com OneAgent + Docker) ────────
+  #
+  # Este job roda LOCALMENTE na sua máquina (self-hosted runner).
+  # O runner executa docker compose up diretamente — sem SSH, sem IP fixo.
+  # O Dynatrace OneAgent instalado no host monitora o container em tempo real.
   deploy:
-    name: Deploy to Server
-    runs-on: ubuntu-latest
+    name: Deploy via Docker Compose (self-hosted)
+    runs-on: [self-hosted, linux]   # ← label do seu runner local
     needs: build
     if: github.ref == 'refs/heads/main'
 
@@ -87,53 +98,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up SSH
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - name: Deploy with Docker Compose
+      - name: Pull nova imagem e reiniciar stack
         env:
-          IMAGE_TAG:  ${{ needs.build.outputs.image-tag }}
-          APP_VERSION: ${{ needs.build.outputs.version }}
-          BUILD_NUMBER: ${{ github.run_number }}
+          APP_VERSION:   ${{ needs.build.outputs.version }}
+          BUILD_NUMBER:  ${{ github.run_number }}
         run: |
-          ssh -o StrictHostKeyChecking=no \
-              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
-              "
-                set -e
-                cd ~/srg-vulnerable-app || (git clone https://github.com/brunoxy01/srg-vulnerable-app.git ~/srg-vulnerable-app && cd ~/srg-vulnerable-app)
-                git pull origin main
-                export APP_VERSION='${{ needs.build.outputs.version }}'
-                export BUILD_NUMBER='${{ github.run_number }}'
-                docker compose pull
-                docker compose up -d --remove-orphans
-                echo '✅ Deployed successfully'
-                docker compose ps
-              "
+          export APP_VERSION="${APP_VERSION}"
+          export BUILD_NUMBER="${BUILD_NUMBER}"
+          docker compose pull
+          docker compose up -d --remove-orphans
+          echo "✅ Stack reiniciada"
+          docker compose ps
 
-      - name: Wait for application health
+      - name: Aguardar health check da aplicação
         run: |
-          echo "⏳ Waiting for app to be healthy..."
-          DEPLOY_HOST="${{ secrets.DEPLOY_HOST }}"
+          echo "⏳ Aguardando a aplicação ficar saudável..."
           for i in $(seq 1 24); do
-            if ssh -o StrictHostKeyChecking=no \
-                   "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
-                   "curl -sf http://localhost:3000/health"; then
-              echo "✅ Application is healthy"
+            if curl -sf http://localhost:3000/health; then
+              echo "✅ Aplicação saudável!"
               exit 0
             fi
-            echo "   Attempt $i/24 — waiting 5s..."
+            echo "   Tentativa $i/24 — aguardando 5s..."
             sleep 5
           done
-          echo "❌ Application did not become healthy in time"
+          echo "❌ Aplicação não ficou saudável a tempo"
           exit 1
 
   # ── 3. SRG Security Gate ────────────────────────────────────────────────────
   security-gate:
     name: SRG Security Validation
     runs-on: ubuntu-latest
-    needs: deploy
+    needs: [build, deploy]
     if: github.ref == 'refs/heads/main'
 
     env:
