@@ -113,24 +113,46 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       # ── ① Instalar Dynatrace OneAgent no runner ───────────────────────────
-      # Requer DT_API_TOKEN: token clássico com escopo "InstallerDownload"
-      # Como criar: Dynatrace → Access tokens → Generate new token → InstallerDownload
+      # Requer DT_API_TOKEN com escopo InstallerDownload.
+      # Dynatrace → Access tokens → Generate new token → InstallerDownload
+      # Continue-on-error: o pipeline NÃO para se o OneAgent falhar.
+      # Nesse caso a validação SRG avalia as vulns já conhecidas na tenant.
       - name: Instalar Dynatrace OneAgent
+        continue-on-error: true
         env:
           DT_API_TOKEN: ${{ secrets.DT_API_TOKEN }}
         run: |
+          if [ -z "${DT_API_TOKEN}" ]; then
+            echo "⚠️  DT_API_TOKEN não configurado — OneAgent não será instalado"
+            echo "    Adicione o secret DT_API_TOKEN com escopo InstallerDownload"
+            exit 0
+          fi
+
           echo "⬇️  Baixando OneAgent installer..."
-          wget -q -O /tmp/Dynatrace-OneAgent.sh \
-            "${DT_TENANT_URL}/api/v1/deployment/installer/agent/unix/default/latest?Api-Token=${DT_API_TOKEN}&arch=x86&flavor=default"
+          HTTP_CODE=$(curl -s -w "%{http_code}" -o /tmp/Dynatrace-OneAgent.sh \
+            "${DT_TENANT_URL}/api/v1/deployment/installer/agent/unix/default/latest?Api-Token=${DT_API_TOKEN}&arch=x86&flavor=default")
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "⚠️  Download falhou (HTTP $HTTP_CODE) — verifique DT_API_TOKEN e escopo InstallerDownload"
+            exit 0
+          fi
+
+          # Verifica se é um script válido (não uma mensagem de erro JSON)
+          if ! head -1 /tmp/Dynatrace-OneAgent.sh | grep -q "^#!/"; then
+            echo "⚠️  Resposta inválida — token pode não ter escopo InstallerDownload"
+            head -c 200 /tmp/Dynatrace-OneAgent.sh
+            exit 0
+          fi
 
           echo "📦 Instalando OneAgent..."
           sudo /bin/sh /tmp/Dynatrace-OneAgent.sh \
             --set-infra-only=false \
             --set-app-log-content-access=true \
-            --set-host-group=github-actions-runner
+            --set-host-group=github-actions-runner \
+            INSTALL_PATH=/opt/dynatrace && echo "✅ OneAgent instalado" \
+            || echo "⚠️  Instalação do OneAgent falhou — pipeline continua sem instrumentação"
 
-          echo "✅ OneAgent instalado"
-          sudo systemctl status dynatrace-oneagent --no-pager || true
+          sudo systemctl status dynatrace-oneagent --no-pager 2>/dev/null || true
 
       # ── ② Subir a aplicação vulnerável ────────────────────────────────────
       - name: Subir aplicação vulnerável (docker compose)
@@ -158,17 +180,18 @@ jobs:
           exit 1
 
       # ── ③ Aguardar OneAgent + AppSec detectarem os CVEs ──────────────────
-      # O OneAgent escaneia o processo Node.js e identifica os pacotes
-      # vulneráveis (node-serialize, ejs, lodash, axios, jsonwebtoken).
-      # Isso leva alguns minutos após o processo iniciar.
-      - name: Aguardar AppSec detectar vulnerabilidades (~8 min)
+      # Se o OneAgent instalou com sucesso, aguarda o processo Node.js ser
+      # instrumentado e os CVEs registrados na tenant (~2 min).
+      # Se o OneAgent não instalou, a validação SRG avalia as vulnerabilidades
+      # já conhecidas na tenant (de execuções anteriores com OneAgent).
+      - name: Aguardar AppSec detectar vulnerabilidades
         run: |
-          echo "⏳ Aguardando Dynatrace Application Security escanear o processo Node.js..."
-          echo "   Pacotes monitorados: node-serialize (CVE-2017-5941), ejs (CVE-2022-29078),"
-          echo "   lodash (CVE-2020-8203), axios (CVE-2021-3749), jsonwebtoken (CVE-2022-23529)"
+          echo "⏳ Aguardando Application Security registrar vulnerabilidades..."
+          echo "   Pacotes: node-serialize (CVE-2017-5941), ejs (CVE-2022-29078),"
+          echo "            lodash (CVE-2020-8203), axios (CVE-2021-3749)"
           echo ""
-          echo "   Janela de espera: 8 minutos"
-          sleep 480
+          echo "   Janela de espera: 2 minutos"
+          sleep 120
           echo "✅ Janela de análise concluída"
 
       # ── ④ Enviar evento de deployment ao Dynatrace ────────────────────────
