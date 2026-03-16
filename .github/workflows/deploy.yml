@@ -197,36 +197,6 @@ jobs:
           echo "✅ Janela de análise concluída"
 
       # ── ④ Enviar evento de deployment ao Dynatrace ────────────────────────
-      - name: Enviar deployment event ao Dynatrace
-        env:
-          DT_CLIENT_ID:     ${{ secrets.DT_CLIENT_ID }}
-          DT_CLIENT_SECRET: ${{ secrets.DT_CLIENT_SECRET }}
-        run: |
-          TOKEN=$(curl -s -X POST "https://sso.dynatrace.com/sso/oauth2/token" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials&client_id=${DT_CLIENT_ID}&client_secret=${DT_CLIENT_SECRET}&scope=openpipeline:events:ingest" \
-            | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
-
-          if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-            # Evento de deployment usa .live.dynatrace.com
-            DT_LIVE_URL=$(echo "${DT_TENANT_URL}" | sed 's/\.apps\.dynatrace\.com/.live.dynatrace.com/')
-            curl -s -X POST "${DT_LIVE_URL}/platform/ingest/v1/events" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{
-                \"eventType\": \"CUSTOM_DEPLOYMENT\",
-                \"title\": \"Deploy srg-vulnerable-app v${APP_VERSION}\",
-                \"properties\": {
-                  \"dt.event.deployment.name\":    \"srg-vulnerable-app\",
-                  \"dt.event.deployment.version\": \"${APP_VERSION}\",
-                  \"git.commit\": \"${GIT_COMMIT}\",
-                  \"ci.pipeline\": \"${GITHUB_RUN_ID}\"
-                }
-              }" && echo "✅ Deployment event enviado" || echo "⚠️  Evento não enviado"
-          else
-            echo "⚠️  Token não obtido — evento de deployment pulado"
-          fi
-
       # ── ⑤ Disparar e verificar validação SRG ─────────────────────────────
       - name: Disparar validação SRG
         env:
