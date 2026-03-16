@@ -86,10 +86,15 @@ while [ $ELAPSED_TIME -lt $MAX_WAIT_TIME ]; do
         -H "Authorization: Bearer $TOKEN" \
         -H "Accept: application/json" 2>/dev/null)
     
-    # Extract workflow state
-    WORKFLOW_STATE=$(echo "$DETAIL_RESPONSE" | grep -o '"state":"[^"]*"' 2>/dev/null | head -1 | cut -d'"' -f4)
+    # Extract workflow state — API can return "state":"X" or "state": "X"
+    WORKFLOW_STATE=$(echo "$DETAIL_RESPONSE" | grep -o '"state"[[:space:]]*:[[:space:]]*"[^"]*"' 2>/dev/null | head -1 | grep -o '"[^"]*"$' | tr -d '"')
     
     echo -e "${YELLOW}   Workflow State: $WORKFLOW_STATE (${ELAPSED_TIME}s elapsed)${NC}"
+    
+    # Se estado vazio, mostra debug
+    if [ -z "$WORKFLOW_STATE" ]; then
+        echo -e "   [debug] $(echo "$DETAIL_RESPONSE" | head -c 300)"
+    fi
     
     # If workflow is still running, wait
     if [ "$WORKFLOW_STATE" = "RUNNING" ]; then
@@ -128,24 +133,12 @@ while [ $ELAPSED_TIME -lt $MAX_WAIT_TIME ]; do
         # Save response for debugging
         echo "$TASKS_RESPONSE" > /tmp/dynatrace_tasks_response.json
         
-        # Extract validation_status from run_validation.result.validation_status
-        # Note: JSON has space after colon like "validation_status": "pass"
-        VALIDATION_STATUS=$(echo "$TASKS_RESPONSE" | grep -o '"validation_status": "[^"]*"' 2>/dev/null | head -1 | cut -d'"' -f4)
-        
-        if [ -z "$VALIDATION_STATUS" ]; then
-            echo -e "${RED}⚠️  Could not find validation_status in workflow tasks${NC}"
-            echo -e "${RED}   The workflow may not have a Guardian validation task${NC}"
-            echo -e "${RED}   Tasks response saved to /tmp/dynatrace_tasks_response.json${NC}"
-            exit 1
-        fi
-        
-        echo -e "${BLUE}   Guardian Validation Status: $VALIDATION_STATUS${NC}"
-        
-        # Extract validation details from run_validation.result (also with spaces)
-        VALIDATION_ID=$(echo "$TASKS_RESPONSE" | grep -o '"validation_id": "[^"]*"' 2>/dev/null | head -1 | cut -d'"' -f4)
-        PASS_COUNT=$(echo "$TASKS_RESPONSE" | grep -o '"pass": [0-9]*' 2>/dev/null | head -1 | awk '{print $2}')
-        FAIL_COUNT=$(echo "$TASKS_RESPONSE" | grep -o '"fail": [0-9]*' 2>/dev/null | head -1 | awk '{print $2}')
-        WARNING_COUNT=$(echo "$TASKS_RESPONSE" | grep -o '"warning": [0-9]*' 2>/dev/null | head -1 | awk '{print $2}')
+        # Extract validation_status — API returns "validation_status": "pass" (with space)
+        VALIDATION_STATUS=$(echo "$TASKS_RESPONSE" | grep -o '"validation_status"[[:space:]]*:[[:space:]]*"[^"]*"' 2>/dev/null | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+        VALIDATION_ID=$(echo "$TASKS_RESPONSE" | grep -o '"validation_id"[[:space:]]*:[[:space:]]*"[^"]*"' 2>/dev/null | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+        PASS_COUNT=$(echo "$TASKS_RESPONSE" | grep -o '"pass"[[:space:]]*:[[:space:]]*[0-9]*' 2>/dev/null | head -1 | grep -o '[0-9]*$')
+        FAIL_COUNT=$(echo "$TASKS_RESPONSE" | grep -o '"fail"[[:space:]]*:[[:space:]]*[0-9]*' 2>/dev/null | head -1 | grep -o '[0-9]*$')
+        WARNING_COUNT=$(echo "$TASKS_RESPONSE" | grep -o '"warning"[[:space:]]*:[[:space:]]*[0-9]*' 2>/dev/null | head -1 | grep -o '[0-9]*$')
         
         # Check Guardian validation result
         if [ "$VALIDATION_STATUS" = "pass" ]; then
