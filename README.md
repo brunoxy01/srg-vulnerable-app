@@ -200,52 +200,49 @@ Verify in the UI:
 
 ---
 
-## Step 5 — Configurar o Self-Hosted Runner no GitHub
+## Step 5 — Configurar os GitHub Actions Secrets
 
-O pipeline usa um **self-hosted runner** para o job de deploy. Isso significa que a própria máquina onde o **Dynatrace OneAgent + Docker** estão instalados vira o executor do GitHub Actions — sem SSH, sem IP fixo, sem segredo de endereço.
+O pipeline roda **100% no cloud do GitHub** (`ubuntu-latest`) — sem servidor fixo, sem self-hosted runner, sem SSH.
 
-### Por que self-hosted runner?
+### Como funciona
 
 ```
-[GitHub Actions Cloud]     [Sua máquina local / VM]
-  job: build  ──────►  job: deploy  (roda aqui!)
-  (ubuntu-latest)       (self-hosted runner)
-                         ↑
-                   OneAgent instalado aqui
-                   monitora o container
-                   AppSec detecta os CVEs
+[ubuntu-latest — VM Linux efêmera do GitHub]              [Dynatrace]
+
+job: build              job: security-gate
+────────────       ──────────────────────────────────────────────────
+build image    →   ① instala OneAgent na VM do runner
+push GHCR          ② docker compose up (sobe app vulnerável)
+                   ③ aguarda AppSec detectar CVEs (~8 min)
+                   ④ dispara SRG Workflow
+                   ⑤ polling do resultado → exit 1 = BLOQUEADO
+                   ⑥ docker compose down  (VM é descartada)
 ```
 
-O runner cloud (`ubuntu-latest`) é efêmero e não tem OneAgent — por isso o deploy precisa rodar na máquina que você controla.
+O runner `ubuntu-latest` é uma VM Linux completa. O OneAgent é instalado nela durante o pipeline, monitora o processo Node.js em tempo real e o Application Security detecta os CVEs dos pacotes vulneráveis. Quando o job termina, a VM é descartada pelo GitHub automaticamente.
 
-### Instalando o runner na sua máquina
-
-1. No GitHub, vá em: **Settings → Actions → Runners → New self-hosted runner**
-2. Selecione **Linux**
-3. Copie e execute os comandos gerados na **sua máquina** (onde já tem Docker e OneAgent):
-   ```bash
-   # Exemplo dos comandos gerados pelo GitHub:
-   mkdir actions-runner && cd actions-runner
-   curl -o actions-runner-linux-x64-2.x.x.tar.gz -L https://github.com/actions/runner/releases/download/...
-   tar xzf ./actions-runner-linux-x64-2.x.x.tar.gz
-   ./config.sh --url https://github.com/brunoxy01/srg-vulnerable-app --token SEU_TOKEN
-   ./run.sh
-   ```
-4. O runner aparece como **Online** no GitHub com a label `self-hosted, linux`.
-
-### Secrets necessários (apenas 5 — sem SSH!)
+### Secrets necessários (apenas 6 — sem SSH, sem servidor fixo)
 
 GitHub → **Settings → Secrets and variables → Actions → New repository secret**:
 
-| Secret | Valor | Como obter |
-|--------|-------|------------|
-| `DOCKER_USERNAME` | `brunoxy01` | Seu username do GitHub |
-| `DOCKER_PASSWORD` | `ghp_...` | GitHub → Settings → Developer settings → Personal access tokens → **write:packages** |
-| `DT_CLIENT_ID` | `dt0s02.XXX` | Account Management → OAuth clients (Step 3) |
-| `DT_CLIENT_SECRET` | `dt0s02.XXX.XXX` | Account Management → OAuth clients (Step 3) |
-| `DT_WORKFLOW_ID` | `uuid` | Saída do `./scripts/setup_dynatrace.sh` (Step 4) |
+| Secret | Como obter |
+|--------|------------|
+| `DOCKER_USERNAME` | Seu username do GitHub: `brunoxy01` |
+| `DOCKER_PASSWORD` | GitHub → Settings → Developer settings → **Personal access tokens** → escopo `write:packages` |
+| `DT_API_TOKEN` | Dynatrace → **Access tokens** → Generate new token → escopo `InstallerDownload` *(ver abaixo)* |
+| `DT_CLIENT_ID` | Account Management → OAuth clients (Step 3) |
+| `DT_CLIENT_SECRET` | Account Management → OAuth clients (Step 3) |
+| `DT_WORKFLOW_ID` | Saída do `./scripts/setup_dynatrace.sh` (Step 4) |
 
-> **Não precisa mais de** `DEPLOY_HOST`, `DEPLOY_USER` nem `DEPLOY_SSH_KEY` — o runner roda o `docker compose up` diretamente na própria máquina.
+### Como criar o DT_API_TOKEN (token para baixar o OneAgent)
+
+Esse token é diferente do OAuth2 — é um token clássico da tenant usado para fazer download do instalador do OneAgent.
+
+1. Acesse: <https://fov31014.apps.dynatrace.com/ui/apps/dynatrace.classic.tokens>
+2. Clique em **Generate new token**
+3. Nome: `oneagent-installer`
+4. Escopo: ✅ `InstallerDownload`
+5. Clique em **Generate token** e copie o valor (começa com `dt0c01.`)
 
 ---
 
