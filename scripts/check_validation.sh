@@ -96,7 +96,8 @@ while [ $ELAPSED -lt $MAX_WAIT_TIME ]; do
     -H "Authorization: Bearer $TOKEN" \
     -H "Accept: application/json")
 
-  STATE=$(echo "$DETAIL" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4)
+  # API retorna "state": "RUNNING" ou "state":"RUNNING" (com ou sem espaço)
+  STATE=$(echo "$DETAIL" | grep -o '"state"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
 
   echo -e "   State: ${STATE}  (${ELAPSED}s elapsed)"
 
@@ -141,12 +142,12 @@ TASKS=$(curl -s "${DT_TENANT_URL}/platform/automation/v1/executions/${EXECUTION_
 
 echo "$TASKS" > /tmp/dynatrace_tasks_response.json
 
-# validation_status can appear with or without a space after the colon
-VALIDATION_STATUS=$(echo "$TASKS" | grep -o '"validation_status"[: ]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
-PASS_COUNT=$(echo "$TASKS"    | grep -o '"pass"[: ]*[0-9]*'    | head -1 | grep -o '[0-9]*$')
-FAIL_COUNT=$(echo "$TASKS"    | grep -o '"fail"[: ]*[0-9]*'    | head -1 | grep -o '[0-9]*$')
-WARNING_COUNT=$(echo "$TASKS" | grep -o '"warning"[: ]*[0-9]*' | head -1 | grep -o '[0-9]*$')
-VALIDATION_ID=$(echo "$TASKS" | grep -o '"validation_id"[: ]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+# API retorna "validation_status": "pass" (com espaço) ou sem espaço
+        VALIDATION_STATUS=$(echo "$TASKS" | grep -o '"validation_status"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+        PASS_COUNT=$(echo "$TASKS"    | grep -o '"pass"[[:space:]]*:[[:space:]]*[0-9]*'    | head -1 | grep -o '[0-9]*$')
+        FAIL_COUNT=$(echo "$TASKS"    | grep -o '"fail"[[:space:]]*:[[:space:]]*[0-9]*'    | head -1 | grep -o '[0-9]*$')
+        WARNING_COUNT=$(echo "$TASKS" | grep -o '"warning"[[:space:]]*:[[:space:]]*[0-9]*' | head -1 | grep -o '[0-9]*$')
+        VALIDATION_ID=$(echo "$TASKS" | grep -o '"validation_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
 
 if [ -z "$VALIDATION_STATUS" ]; then
   echo -e "${RED}❌  Could not extract validation_status from tasks response.${NC}"

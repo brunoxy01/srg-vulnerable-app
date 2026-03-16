@@ -208,7 +208,9 @@ jobs:
             | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
 
           if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-            curl -s -X POST "${DT_TENANT_URL}/platform/ingest/v1/events" \
+            # Evento de deployment usa .live.dynatrace.com
+            DT_LIVE_URL=$(echo "${DT_TENANT_URL}" | sed 's/\.apps\.dynatrace\.com/.live.dynatrace.com/')
+            curl -s -X POST "${DT_LIVE_URL}/platform/ingest/v1/events" \
               -H "Authorization: Bearer $TOKEN" \
               -H "Content-Type: application/json" \
               -d "{
