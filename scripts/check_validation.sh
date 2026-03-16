@@ -30,7 +30,7 @@ NC='\033[0m'
 
 # ── Config ────────────────────────────────────────────────────────────────────
 AUTH_URL="https://sso.dynatrace.com/sso/oauth2/token"
-OAUTH_SCOPE="automation:workflows:run"
+OAUTH_SCOPE="automation:workflows:run automation:workflows:read"
 DT_TENANT_URL="${DT_TENANT_URL:-https://fov31014.apps.dynatrace.com}"
 MAX_WAIT_TIME="${MAX_WAIT_TIME:-300}"
 POLL_INTERVAL="${POLL_INTERVAL:-15}"
@@ -102,7 +102,8 @@ while [ $ELAPSED -lt $MAX_WAIT_TIME ]; do
 
   echo -e "   State: ${STATE:-UNKNOWN}  (${ELAPSED}s elapsed)"
   if [ -z "$STATE" ]; then
-    echo -e "   ${YELLOW}[debug] raw response: $(echo \"$DETAIL\" | head -c 300)${NC}"
+    echo -e "   [debug] URL: ${DT_TENANT_URL}/platform/automation/v1/executions/${EXECUTION_ID}"
+    echo -e "   [debug] raw response: $(echo "$DETAIL" | head -c 300)"
   fi
 
   if [ "$STATE" = "RUNNING" ]; then
