@@ -80,7 +80,7 @@ echo ""
 ELAPSED_TIME=0
 
 while [ $ELAPSED_TIME -lt $MAX_WAIT_TIME ]; do
-    # Get execution details
+    # Get execution details — tenta por ID; se 404, tenta por workflowId
     DETAIL_URL="$DT_TENANT_URL/platform/automation/v1/executions/$EXECUTION_ID"
     DETAIL_RESPONSE=$(curl -s -X GET "$DETAIL_URL" \
         -H "Authorization: Bearer $TOKEN" \
@@ -88,6 +88,26 @@ while [ $ELAPSED_TIME -lt $MAX_WAIT_TIME ]; do
     
     # Extract workflow state — API can return "state":"X" or "state": "X"
     WORKFLOW_STATE=$(echo "$DETAIL_RESPONSE" | grep -o '"state"[[:space:]]*:[[:space:]]*"[^"]*"' 2>/dev/null | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+
+    # Fallback: se GET por ID falhou (404/403), busca pela lista do workflow
+    if [ -z "$WORKFLOW_STATE" ] && [ -n "$DT_WORKFLOW_ID" ]; then
+        LIST_RESPONSE=$(curl -s -X GET "$DT_TENANT_URL/platform/automation/v1/executions?workflowId=$DT_WORKFLOW_ID&limit=5" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/json" 2>/dev/null)
+        WORKFLOW_STATE=$(echo "$LIST_RESPONSE" | python3 -c "
+import sys,json
+try:
+    data=json.load(sys.stdin)
+    for e in data.get('executions',data.get('results',[])):
+        if e.get('id')=='$EXECUTION_ID':
+            print(e.get('state',''))
+            break
+    else:
+        execs = data.get('executions',data.get('results',[]))
+        if execs: print(execs[0].get('state',''))
+except: pass
+" 2>/dev/null)
+    fi
     
     echo -e "${YELLOW}   Workflow State: $WORKFLOW_STATE (${ELAPSED_TIME}s elapsed)${NC}"
     
