@@ -96,10 +96,12 @@ while [ $ELAPSED -lt $MAX_WAIT_TIME ]; do
     -H "Authorization: Bearer $TOKEN" \
     -H "Accept: application/json")
 
-  # API retorna "state": "RUNNING" ou "state":"RUNNING" (com ou sem espaço)
-  STATE=$(echo "$DETAIL" | grep -o '"state"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+  STATE=$(echo "$DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('state',''))" 2>/dev/null || true)
 
-  echo -e "   State: ${STATE}  (${ELAPSED}s elapsed)"
+  echo -e "   State: ${STATE:-UNKNOWN}  (${ELAPSED}s elapsed)"
+  if [ -z "$STATE" ]; then
+    echo -e "   ${YELLOW}[debug] raw response: $(echo \"$DETAIL\" | head -c 300)${NC}"
+  fi
 
   if [ "$STATE" = "RUNNING" ]; then
     sleep "$POLL_INTERVAL"
@@ -142,12 +144,29 @@ TASKS=$(curl -s "${DT_TENANT_URL}/platform/automation/v1/executions/${EXECUTION_
 
 echo "$TASKS" > /tmp/dynatrace_tasks_response.json
 
-# API retorna "validation_status": "pass" (com espaço) ou sem espaço
-        VALIDATION_STATUS=$(echo "$TASKS" | grep -o '"validation_status"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
-        PASS_COUNT=$(echo "$TASKS"    | grep -o '"pass"[[:space:]]*:[[:space:]]*[0-9]*'    | head -1 | grep -o '[0-9]*$')
-        FAIL_COUNT=$(echo "$TASKS"    | grep -o '"fail"[[:space:]]*:[[:space:]]*[0-9]*'    | head -1 | grep -o '[0-9]*$')
-        WARNING_COUNT=$(echo "$TASKS" | grep -o '"warning"[[:space:]]*:[[:space:]]*[0-9]*' | head -1 | grep -o '[0-9]*$')
-        VALIDATION_ID=$(echo "$TASKS" | grep -o '"validation_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+VALIDATION_STATUS=$(echo "$TASKS" | python3 -c "
+import sys, json
+try:
+  data = json.load(sys.stdin)
+  # tasks endpoint returns {taskName: {state, result, ...}, ...}
+  items = data.values() if isinstance(data, dict) else data
+  for t in items:
+    if not isinstance(t, dict):
+      continue
+    r = t.get('result') or {}
+    vs = r.get('validation_status') or r.get('validationStatus', '')
+    if vs:
+      pc = r.get('summary', {}).get('pass', 0)
+      fc = r.get('summary', {}).get('fail', 0)
+      wc = r.get('summary', {}).get('warning', 0)
+      vi = r.get('validation_id', t.get('id', ''))
+      print(vs, pc, fc, wc, vi)
+      break
+except Exception as e:
+  sys.stderr.write(str(e) + '\n')
+" 2>/tmp/dt_py_err.txt)
+
+read -r VALIDATION_STATUS PASS_COUNT FAIL_COUNT WARNING_COUNT VALIDATION_ID <<< "$VALIDATION_STATUS"
 
 if [ -z "$VALIDATION_STATUS" ]; then
   echo -e "${RED}❌  Could not extract validation_status from tasks response.${NC}"
