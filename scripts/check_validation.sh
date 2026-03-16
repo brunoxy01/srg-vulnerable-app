@@ -83,9 +83,8 @@ echo ""
 # Evita o 403 do Automation API (não há scope para ler execuções de outro user)
 echo -e "${YELLOW}🔍 Consultando security.events via DQL...${NC}"
 
-DT_LIVE_URL=$(echo "${DT_TENANT_URL}" | sed 's/\.apps\.dynatrace\.com/.live.dynatrace.com/')
-
-QUERY_RESPONSE=$(curl -s -X POST "${DT_LIVE_URL}/platform/storage/query/v1/query:execute" \
+# Storage Query API usa .apps.dynatrace.com (não .live.)
+QUERY_RESPONSE=$(curl -s -X POST "${DT_TENANT_URL}/platform/storage/query/v1/query:execute" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -95,7 +94,12 @@ QUERY_RESPONSE=$(curl -s -X POST "${DT_LIVE_URL}/platform/storage/query/v1/query
 
 echo "  [debug] DQL response: $(echo \"$QUERY_RESPONSE\" | head -c 600)"
 echo ""
-
+# Verifica se a resposta é um erro (HTML ou JSON com error)
+if echo "$QUERY_RESPONSE" | grep -qi "forbidden\|unauthorized\|error"; then
+  echo -e "${RED}❌  DQL query falhou — não é possível verificar vulnerabilidades${NC}"
+  echo -e "${RED}    Bloqueando deployment por precaução (fail-safe)${NC}"
+  exit 1
+fi
 CRITICAL_COUNT=$(echo "$QUERY_RESPONSE" | python3 -c "
 import sys,json
 try:
