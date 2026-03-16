@@ -87,6 +87,7 @@ WORKFLOW_PAYLOAD=$(cat <<EOF
       "active": true,
       "input": {
         "executableId": "${DT_GUARDIAN_ID}",
+        "timeframeInputType": "expression",
         "executionRequestParameters": {
           "timeframeStart": "now()-1h",
           "timeframeEnd": "now()"
