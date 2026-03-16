@@ -5,7 +5,7 @@
     {
       "name": "Sem vulnerabilidades CRITICAL",
       "objectiveType": "DQL",
-      "dqlQuery": "fetch security_problems | filter status == \"OPEN\" and riskLevel == \"CRITICAL\" | count",
+      "dqlQuery": "fetch security.events | dedup {vulnerability.display_id, affected_entity.id} | filter vulnerability.resolution.status==\"OPEN\" AND vulnerability.parent.mute.status!=\"MUTED\" AND vulnerability.mute.status!=\"MUTED\" AND vulnerability.risk.level==\"CRITICAL\" | summarize {'Critical open vulnerabilities'=countDistinct(vulnerability.display_id)}",
       "target": 0,
       "warning": 0,
       "comparisonOperator": "LESS_THAN_OR_EQUAL"
@@ -13,7 +13,7 @@
     {
       "name": "Vulnerabilidades HIGH menores que 3",
       "objectiveType": "DQL",
-      "dqlQuery": "fetch security_problems | filter status == \"OPEN\" and riskLevel == \"HIGH\" | count",
+      "dqlQuery": "fetch security.events | dedup {vulnerability.display_id, affected_entity.id} | filter vulnerability.resolution.status==\"OPEN\" AND vulnerability.parent.mute.status!=\"MUTED\" AND vulnerability.mute.status!=\"MUTED\" AND vulnerability.risk.level==\"HIGH\" | summarize {'High open vulnerabilities'=countDistinct(vulnerability.display_id)}",
       "target": 2,
       "warning": 1,
       "comparisonOperator": "LESS_THAN_OR_EQUAL"
