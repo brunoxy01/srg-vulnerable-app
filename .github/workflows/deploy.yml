@@ -246,6 +246,7 @@ jobs:
           DT_CLIENT_ID:     ${{ secrets.DT_CLIENT_ID }}
           DT_CLIENT_SECRET: ${{ secrets.DT_CLIENT_SECRET }}
           DT_TENANT_URL:    https://fov31014.apps.dynatrace.com
+          DT_WORKFLOW_ID:   ${{ secrets.DT_WORKFLOW_ID }}
           MAX_WAIT_TIME:    300
           POLL_INTERVAL:    15
         run: |

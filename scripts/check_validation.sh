@@ -86,24 +86,52 @@ EXECUTION_ID=$(cat /tmp/dynatrace_execution_id.txt)
 echo -e "${BLUE}📋 Monitoring execution: ${EXECUTION_ID}${NC}"
 echo ""
 
-# ── Poll for completion ───────────────────────────────────────────────────────
+# ── Poll for completion (via lista de execuções do workflow) ──────────────────
+# Usamos GET /executions?workflowId=... em vez de GET /executions/{id}
+# porque execuções criadas via API pertencem ao dono do workflow (UI user),
+# e o service account só consegue listar via workflowId com scope :run.
 echo -e "${YELLOW}⏳ Waiting for workflow to complete...${NC}"
-echo -e "   Aguardando 10s para execução ser registrada na API..."
-sleep 10
+echo -e "   Aguardando 15s para execução ser registrada na API..."
+sleep 15
 
-ELAPSED=10
+ELAPSED=15
 
 while [ $ELAPSED -lt $MAX_WAIT_TIME ]; do
-  DETAIL=$(curl -s "${DT_TENANT_URL}/platform/automation/v1/executions/${EXECUTION_ID}" \
+  LIST=$(curl -s "${DT_TENANT_URL}/platform/automation/v1/executions?workflowId=${DT_WORKFLOW_ID}&limit=5" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Accept: application/json")
 
-  STATE=$(echo "$DETAIL" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('state',''))" 2>/dev/null || true)
+  STATE=$(echo "$LIST" | python3 -c "
+import sys, json
+try:
+  data = json.load(sys.stdin)
+  items = data if isinstance(data, list) else data.get('executions', data.get('items', []))
+  for e in items:
+    if e.get('id') == '${EXECUTION_ID}':
+      print(e.get('state', ''))
+      break
+except:
+  pass
+" 2>/dev/null || true)
+
+  # fallback: se não achou por ID, pega o mais recente da lista
+  if [ -z "$STATE" ]; then
+    STATE=$(echo "$LIST" | python3 -c "
+import sys, json
+try:
+  data = json.load(sys.stdin)
+  items = data if isinstance(data, list) else data.get('executions', data.get('items', []))
+  if items:
+    print(items[0].get('state', ''))
+except:
+  pass
+" 2>/dev/null || true)
+    [ -n "$STATE" ] && echo -e "   [info] usando execução mais recente do workflow"
+  fi
 
   echo -e "   State: ${STATE:-UNKNOWN}  (${ELAPSED}s elapsed)"
   if [ -z "$STATE" ]; then
-    echo -e "   [debug] URL: ${DT_TENANT_URL}/platform/automation/v1/executions/${EXECUTION_ID}"
-    echo -e "   [debug] raw response: $(echo "$DETAIL" | head -c 300)"
+    echo -e "   [debug] list response: $(echo "$LIST" | head -c 400)"
   fi
 
   if [ "$STATE" = "RUNNING" ]; then
@@ -113,12 +141,10 @@ while [ $ELAPSED -lt $MAX_WAIT_TIME ]; do
   fi
 
   if [ "$STATE" = "ERROR" ] || [ "$STATE" = "FAILED" ]; then
-    STATE_INFO=$(echo "$DETAIL" | grep -o '"stateInfo":"[^"]*"' | head -1 | cut -d'"' -f4)
     echo ""
     echo -e "${RED}╔══════════════════════════════════════════════════════╗${NC}"
     echo -e "${RED}║          ❌  WORKFLOW EXECUTION FAILED               ║${NC}"
     echo -e "${RED}╚══════════════════════════════════════════════════════╝${NC}"
-    echo -e "${RED}   Error: ${STATE_INFO}${NC}"
     echo -e "${YELLOW}   Execution: ${DT_TENANT_URL}/ui/apps/dynatrace.automations/executions/${EXECUTION_ID}${NC}"
     exit 1
   fi
@@ -127,7 +153,7 @@ while [ $ELAPSED -lt $MAX_WAIT_TIME ]; do
     break
   fi
 
-  # Unknown state — keep waiting
+  # Estado desconhecido — continua a aguardar
   sleep "$POLL_INTERVAL"
   ELAPSED=$(( ELAPSED + POLL_INTERVAL ))
 done
@@ -141,9 +167,19 @@ fi
 echo ""
 echo -e "${YELLOW}🔍 Reading Guardian validation result from workflow tasks...${NC}"
 
+# Tenta o endpoint de tasks; se 403, usa o resultado já obtido da lista
 TASKS=$(curl -s "${DT_TENANT_URL}/platform/automation/v1/executions/${EXECUTION_ID}/tasks" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Accept: application/json")
+
+# Se tasks retornou erro, usa a lista de execuções (que inclui o resultado)
+TASKS_ERR=$(echo "$TASKS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error',''))" 2>/dev/null || true)
+if [ -n "$TASKS_ERR" ]; then
+  echo -e "   [info] /tasks endpoint inacessível — usando result da lista de execuções"
+  TASKS=$(curl -s "${DT_TENANT_URL}/platform/automation/v1/executions?workflowId=${DT_WORKFLOW_ID}&limit=5" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Accept: application/json")
+fi
 
 echo "$TASKS" > /tmp/dynatrace_tasks_response.json
 
@@ -151,20 +187,38 @@ VALIDATION_STATUS=$(echo "$TASKS" | python3 -c "
 import sys, json
 try:
   data = json.load(sys.stdin)
-  # tasks endpoint returns {taskName: {state, result, ...}, ...}
-  items = data.values() if isinstance(data, dict) else data
-  for t in items:
-    if not isinstance(t, dict):
-      continue
-    r = t.get('result') or {}
-    vs = r.get('validation_status') or r.get('validationStatus', '')
-    if vs:
-      pc = r.get('summary', {}).get('pass', 0)
-      fc = r.get('summary', {}).get('fail', 0)
-      wc = r.get('summary', {}).get('warning', 0)
-      vi = r.get('validation_id', t.get('id', ''))
-      print(vs, pc, fc, wc, vi)
-      break
+
+  # Formato 1: dict de tasks {taskName: {state, result, ...}}
+  if isinstance(data, dict) and not data.get('executions') and not data.get('error'):
+    for t in data.values():
+      if not isinstance(t, dict): continue
+      r = t.get('result') or {}
+      vs = r.get('validation_status') or r.get('validationStatus', '')
+      if vs:
+        pc = r.get('summary', {}).get('pass', 0)
+        fc = r.get('summary', {}).get('fail', 0)
+        wc = r.get('summary', {}).get('warning', 0)
+        vi = r.get('validation_id', t.get('id', ''))
+        print(vs, pc, fc, wc, vi)
+        sys.exit(0)
+
+  # Formato 2: lista de execuções [{id, state, tasks: {taskName: {result}}}]
+  items = data if isinstance(data, list) else data.get('executions', data.get('items', []))
+  for e in items:
+    if not isinstance(e, dict): continue
+    tasks = e.get('tasks') or {}
+    for t in tasks.values():
+      if not isinstance(t, dict): continue
+      r = t.get('result') or {}
+      vs = r.get('validation_status') or r.get('validationStatus', '')
+      if vs:
+        pc = r.get('summary', {}).get('pass', 0)
+        fc = r.get('summary', {}).get('fail', 0)
+        wc = r.get('summary', {}).get('warning', 0)
+        vi = r.get('validation_id', '')
+        print(vs, pc, fc, wc, vi)
+        sys.exit(0)
+
 except Exception as e:
   sys.stderr.write(str(e) + '\n')
 " 2>/tmp/dt_py_err.txt)
