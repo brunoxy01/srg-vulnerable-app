@@ -9,7 +9,7 @@
       "action": "dynatrace.site.reliability.guardian:validate-guardian-action",
       "active": true,
       "input": {
-        "executableId": "GUARDIAN_ID_PLACEHOLDER",
+        "executableId": "afe12e80-e74a-3e67-8eae-ab0db7d3fda1",
         "executionRequestParameters": {
           "timeframeStart": "now()-1h",
           "timeframeEnd": "now()"

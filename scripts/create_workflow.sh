@@ -77,7 +77,7 @@ echo -e "${YELLOW}⚙️  Criando Automation Workflow...${NC}"
 WORKFLOW_PAYLOAD=$(cat <<EOF
 {
   "title": "SRG Security Validation — srg-vulnerable-app",
-  "description": "Disparado pelo GitHub Actions após cada deploy. Avalia o Guardian e bloqueia CVEs.",
+  "description": "Criado pela UI em 16/03/2026. Workflow ID: b38937a1-f7d5-479e-abf4-eac17b6fe17d",
   "schemaVersion": 3,
   "trigger": {},
   "tasks": {
