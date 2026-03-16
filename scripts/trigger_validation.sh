@@ -103,7 +103,8 @@ HTTP_STATUS=$(echo "$TRIGGER_FULL" | grep "HTTP_STATUS:" | cut -d: -f2)
 RESPONSE_BODY=$(echo "$TRIGGER_FULL" | grep -v "HTTP_STATUS:")
 
 if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-  EXECUTION_ID=$(echo "$RESPONSE_BODY" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+  echo -e "[debug] trigger raw response: $(echo \"$RESPONSE_BODY\" | head -c 500)"
+  EXECUTION_ID=$(echo "$RESPONSE_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id') or d.get('executionId',''))" 2>/dev/null || echo "")
   echo -e "${GREEN}✅ Workflow triggered — Execution ID: ${EXECUTION_ID}${NC}"
   echo "$EXECUTION_ID" > /tmp/dynatrace_execution_id.txt
   echo ""
