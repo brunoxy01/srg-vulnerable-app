@@ -1,0 +1,4 @@
+This is a sample data file used to demonstrate the Path Traversal vulnerability.
+
+Try: /api/file?name=../../etc/passwd
+     /api/file?name=../../proc/version

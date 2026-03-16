@@ -1,0 +1,157 @@
+#!/bin/bash
+# ──────────────────────────────────────────────────────────────────────────────
+# setup_dynatrace.sh
+#
+# Creates the SRG Guardian and Automation Workflow in your Dynatrace tenant.
+# Run this ONCE before the first CI/CD execution.
+#
+# Prerequisites:
+#   - Dynatrace OAuth2 client with the following scopes:
+#       automation:workflows:read
+#       automation:workflows:write
+#       automation:workflows:run
+#       srg:guardians:read
+#       srg:guardians:write
+#       security:findings:read
+#
+#   Create the OAuth client at:
+#   https://fov31014.apps.dynatrace.com/ui/apps/dynatrace.classic.settings/settings/oauth-client-management
+#
+# Usage:
+#   cp .env.example .env      # fill in DT_CLIENT_ID, DT_CLIENT_SECRET
+#   chmod +x scripts/setup_dynatrace.sh
+#   ./scripts/setup_dynatrace.sh
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -e
+
+# ── Colours ───────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# ── Load .env ─────────────────────────────────────────────────────────────────
+if [ -f .env ]; then
+  while IFS='=' read -r key value; do
+    if [ -n "$key" ] && [[ ! "$key" =~ ^# ]]; then
+      export "$key=$value"
+    fi
+  done < .env
+fi
+
+DT_TENANT_URL="${DT_TENANT_URL:-https://fov31014.apps.dynatrace.com}"
+AUTH_URL="https://sso.dynatrace.com/sso/oauth2/token"
+OAUTH_SCOPE="automation:workflows:read automation:workflows:write automation:workflows:run srg:guardians:read srg:guardians:write security:findings:read"
+
+echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║   Dynatrace SRG Security Gate — Initial Setup               ║${NC}"
+echo -e "${BLUE}║   Tenant: ${DT_TENANT_URL}  ║${NC}"
+echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+echo ""
+
+# ── Validate env vars ─────────────────────────────────────────────────────────
+if [ -z "$DT_CLIENT_ID" ] || [ -z "$DT_CLIENT_SECRET" ]; then
+  echo -e "${RED}❌  Missing required environment variables.${NC}"
+  echo ""
+  echo "  DT_CLIENT_ID     = ${DT_CLIENT_ID:-<not set>}"
+  echo "  DT_CLIENT_SECRET = ${DT_CLIENT_SECRET:+<set>}${DT_CLIENT_SECRET:-<not set>}"
+  echo ""
+  echo "How to create an OAuth client:"
+  echo "  1. Open ${DT_TENANT_URL}/ui/apps/dynatrace.classic.settings/settings/oauth-client-management"
+  echo "  2. Click 'Create client'"
+  echo "  3. Name: srg-security-gate"
+  echo "  4. Scopes: $OAUTH_SCOPE"
+  echo "  5. Copy Client ID and Secret into your .env file"
+  echo ""
+  exit 1
+fi
+
+# ── Authenticate ──────────────────────────────────────────────────────────────
+echo -e "${YELLOW}🔐 Authenticating with Dynatrace OAuth2...${NC}"
+
+AUTH_RESPONSE=$(curl -s -X POST "$AUTH_URL" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials&client_id=${DT_CLIENT_ID}&client_secret=${DT_CLIENT_SECRET}&scope=${OAUTH_SCOPE// /%20}")
+
+TOKEN=$(echo "$AUTH_RESPONSE" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+  echo -e "${RED}❌  Authentication failed.${NC}"
+  echo "Response: $AUTH_RESPONSE"
+  exit 1
+fi
+
+echo -e "${GREEN}✅ Authenticated${NC}"
+echo ""
+
+# ── Create SRG Guardian ───────────────────────────────────────────────────────
+echo -e "${YELLOW}🛡️  Creating SRG Guardian...${NC}"
+
+GUARDIAN_JSON=$(cat dynatrace/guardian.json)
+
+GUARDIAN_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+  -X POST "${DT_TENANT_URL}/api/site-reliability-guardian/v1/guardians" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$GUARDIAN_JSON")
+
+HTTP_STATUS=$(echo "$GUARDIAN_RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+GUARDIAN_BODY=$(echo "$GUARDIAN_RESPONSE" | grep -v "HTTP_STATUS:")
+
+if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+  GUARDIAN_ID=$(echo "$GUARDIAN_BODY" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+  echo -e "${GREEN}✅ Guardian created — ID: ${GUARDIAN_ID}${NC}"
+else
+  echo -e "${RED}❌  Failed to create guardian (HTTP $HTTP_STATUS)${NC}"
+  echo "Response: $GUARDIAN_BODY"
+  exit 1
+fi
+
+# ── Create Automation Workflow ────────────────────────────────────────────────
+echo ""
+echo -e "${YELLOW}⚙️  Creating Automation Workflow...${NC}"
+
+# Inject guardian ID into workflow template
+WORKFLOW_JSON=$(cat dynatrace/workflow.json | sed "s/GUARDIAN_ID_PLACEHOLDER/${GUARDIAN_ID}/g")
+
+WORKFLOW_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+  -X POST "${DT_TENANT_URL}/platform/automation/v1/workflows" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$WORKFLOW_JSON")
+
+HTTP_STATUS=$(echo "$WORKFLOW_RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+WORKFLOW_BODY=$(echo "$WORKFLOW_RESPONSE" | grep -v "HTTP_STATUS:")
+
+if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+  WORKFLOW_ID=$(echo "$WORKFLOW_BODY" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+  echo -e "${GREEN}✅ Workflow created — ID: ${WORKFLOW_ID}${NC}"
+else
+  echo -e "${RED}❌  Failed to create workflow (HTTP $HTTP_STATUS)${NC}"
+  echo "Response: $WORKFLOW_BODY"
+  exit 1
+fi
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+echo ""
+echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   ✅  Setup complete!                                        ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "${YELLOW}Add these secrets to your GitHub repository:${NC}"
+echo "  Settings → Secrets and variables → Actions → New repository secret"
+echo ""
+echo -e "  ${BLUE}DT_CLIENT_ID${NC}     = $DT_CLIENT_ID"
+echo -e "  ${BLUE}DT_CLIENT_SECRET${NC} = <your secret>"
+echo -e "  ${BLUE}DT_TENANT_URL${NC}    = $DT_TENANT_URL"
+echo -e "  ${BLUE}DT_WORKFLOW_ID${NC}   = ${WORKFLOW_ID}"
+echo -e "  ${BLUE}DT_GUARDIAN_ID${NC}   = ${GUARDIAN_ID}"
+echo ""
+echo -e "${BLUE}Guardian dashboard:${NC}"
+echo "  ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian/guardian/${GUARDIAN_ID}"
+echo ""
+echo -e "${BLUE}Workflow dashboard:${NC}"
+echo "  ${DT_TENANT_URL}/ui/apps/dynatrace.automations/workflows/${WORKFLOW_ID}"
+echo ""

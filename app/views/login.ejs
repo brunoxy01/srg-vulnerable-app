@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — SQL Injection Demo</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <div class="container py-5" style="max-width: 520px;">
+    <a href="/" class="btn btn-sm btn-outline-secondary mb-3">← Back</a>
+
+    <div class="card shadow-sm">
+      <div class="card-header bg-danger text-white">
+        <h5 class="mb-0">⚠️ SQL Injection Demo — Login</h5>
+      </div>
+      <div class="card-body">
+
+        <div class="alert alert-warning small mb-4">
+          <strong>Vulnerability:</strong> SQL Injection<br>
+          <strong>Endpoint:</strong> <code>GET /login?username=...&amp;password=...</code><br>
+          <strong>PoC:</strong> Username → <code>' OR '1'='1' --</code> &nbsp; Password → <em>anything</em>
+        </div>
+
+        <% if (error) { %>
+          <div class="alert alert-danger"><%= error %></div>
+        <% } %>
+
+        <% if (user) { %>
+          <div class="alert alert-success">
+            <strong>✅ Logged in as:</strong> <code><%= user.username %></code>
+            (role: <strong><%= user.role %></strong>)<br>
+            <% if (token) { %>
+              <small class="text-break"><strong>JWT:</strong> <%= token %></small>
+            <% } %>
+          </div>
+        <% } %>
+
+        <form method="GET" action="/login">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Username</label>
+            <input type="text" name="username" class="form-control font-monospace"
+                   placeholder="' OR '1'='1' --">
+          </div>
+          <div class="mb-4">
+            <label class="form-label fw-semibold">Password</label>
+            <input type="text" name="password" class="form-control"
+                   placeholder="anything">
+          </div>
+          <button type="submit" class="btn btn-danger w-100">Login</button>
+        </form>
+
+      </div>
+    </div>
+  </div>
+</body>
+</html>

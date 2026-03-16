@@ -1,0 +1,25 @@
+{
+  "name": "Security Gate — srg-vulnerable-app",
+  "description": "Blocks deployments when Dynatrace Application Security detects critical or high-severity vulnerabilities in the srg-vulnerable-app service.",
+  "tags": ["security", "srg-demo", "appsec"],
+  "objectives": [
+    {
+      "name": "No Critical Vulnerabilities",
+      "description": "Fails if ANY critical (CVSS ≥ 9.0) vulnerability is open. With the demo app, node-serialize@0.0.4 (CVE-2017-5941) and ejs@3.1.6 (CVE-2022-29078) both score 9.8.",
+      "objectiveType": "DQL",
+      "dqlQuery": "fetch security_problems | filter status == \"OPEN\" and riskLevel == \"CRITICAL\" | count",
+      "target": 0,
+      "warning": 0,
+      "comparisonOperator": "LESS_THAN_OR_EQUAL"
+    },
+    {
+      "name": "High Vulnerabilities < 3",
+      "description": "Warns if 1-2 high-severity vulnerabilities are open; fails if 3 or more. lodash@4.17.15 (CVE-2020-8203) and axios@0.21.1 (CVE-2021-3749) are both HIGH.",
+      "objectiveType": "DQL",
+      "dqlQuery": "fetch security_problems | filter status == \"OPEN\" and riskLevel == \"HIGH\" | count",
+      "target": 2,
+      "warning": 1,
+      "comparisonOperator": "LESS_THAN_OR_EQUAL"
+    }
+  ]
+}

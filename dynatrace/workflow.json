@@ -1,0 +1,33 @@
+{
+  "title": "SRG Security Validation — srg-vulnerable-app",
+  "description": "Triggered by GitHub Actions after each deployment. Evaluates the SRG Guardian and sets the pipeline status.",
+  "isPrivate": false,
+  "trigger": {
+    "schedule": {
+      "rule": null,
+      "isActive": false
+    },
+    "eventTrigger": null
+  },
+  "tasks": {
+    "run_validation": {
+      "name": "run_validation",
+      "action": "dynatrace.site.reliability.guardian:validate-guardian-action",
+      "active": true,
+      "input": {
+        "executableId": "GUARDIAN_ID_PLACEHOLDER",
+        "executionRequestParameters": {
+          "timeframeStart": "now()-1h",
+          "timeframeEnd": "now()"
+        }
+      },
+      "position": { "x": 0, "y": 1 },
+      "conditions": {
+        "states": {},
+        "custom": "",
+        "else": "STOP"
+      },
+      "timeout": 300000
+    }
+  }
+}

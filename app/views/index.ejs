@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SRG Vulnerable App — Dynatrace Security Gate Demo</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background: #f8f9fa; }
+    .demo-card { transition: box-shadow .2s; border-top: 3px solid transparent; }
+    .demo-card:hover { box-shadow: 0 .5rem 1.5rem rgba(0,0,0,.12); }
+    .demo-card.critical { border-top-color: #dc3545; }
+    .demo-card.high { border-top-color: #fd7e14; }
+    .vuln-badge { font-size: .7rem; letter-spacing: .05em; }
+    code { background: #e9ecef; padding: 1px 5px; border-radius: 3px; font-size: .82em; }
+  </style>
+</head>
+<body>
+  <nav class="navbar navbar-dark bg-danger py-3">
+    <div class="container-lg">
+      <span class="navbar-brand fw-bold fs-5">⚠️ SRG Vulnerable App</span>
+      <span class="badge bg-warning text-dark fs-6">FOR DEMO USE ONLY — NOT FOR PRODUCTION</span>
+    </div>
+  </nav>
+
+  <div class="container-lg py-5">
+    <div class="alert alert-danger d-flex gap-2 align-items-start">
+      <span class="fs-4">🔓</span>
+      <div>
+        <strong>This app contains intentional security vulnerabilities.</strong><br>
+        They are detected at runtime by
+        <a href="https://docs.dynatrace.com/docs/deliver/site-reliability-guardian" target="_blank">Dynatrace Application Security</a>
+        and the <strong>Site Reliability Guardian (SRG)</strong> blocks the CI/CD deployment automatically.
+      </div>
+    </div>
+
+    <div class="row align-items-center mb-4">
+      <div class="col">
+        <h2 class="fw-bold mb-0">Vulnerability Demos</h2>
+        <p class="text-muted mb-0">Click a card to try the demo endpoint.</p>
+      </div>
+      <div class="col-auto">
+        <a href="/vulnerabilities" class="btn btn-outline-secondary btn-sm me-2">📋 CVE JSON</a>
+        <a href="/health" class="btn btn-outline-success btn-sm">❤️ Health</a>
+      </div>
+    </div>
+
+    <div class="row g-4">
+
+      <div class="col-md-6 col-xl-4">
+        <div class="card demo-card critical h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <h5 class="card-title mb-0">🔑 SQL Injection</h5>
+              <span class="badge bg-danger vuln-badge">CRITICAL</span>
+            </div>
+            <p class="card-text small text-muted">Login form uses string-concatenated SQL — bypassed with <code>' OR '1'='1' --</code></p>
+            <a href="/login" class="btn btn-sm btn-danger">Try Demo →</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-6 col-xl-4">
+        <div class="card demo-card high h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <h5 class="card-title mb-0">💉 Reflected XSS</h5>
+              <span class="badge bg-warning text-dark vuln-badge">HIGH</span>
+            </div>
+            <p class="card-text small text-muted">Search page renders input raw (<code>&lt;%-&gt;</code> in EJS) — no escaping.</p>
+            <a href="/search?q=<b>Hello XSS</b>" class="btn btn-sm btn-warning">Try Demo →</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-6 col-xl-4">
+        <div class="card demo-card critical h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <h5 class="card-title mb-0">💻 Command Injection</h5>
+              <span class="badge bg-danger vuln-badge">CRITICAL</span>
+            </div>
+            <p class="card-text small text-muted">Ping endpoint runs <code>ping -c 3 &lt;host&gt;</code> directly in shell.</p>
+            <a href="/ping?host=localhost" class="btn btn-sm btn-danger">Try Demo →</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-6 col-xl-4">
+        <div class="card demo-card critical h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <h5 class="card-title mb-0">📦 Insecure Deserialization</h5>
+              <span class="badge bg-danger vuln-badge">CRITICAL · CVE-2017-5941</span>
+            </div>
+            <p class="card-text small text-muted"><code>node-serialize@0.0.4</code> — RCE via crafted payload. CVSS <strong>9.8</strong>.</p>
+            <code class="small d-block mt-2">POST /api/profile</code>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-6 col-xl-4">
+        <div class="card demo-card high h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <h5 class="card-title mb-0">🌐 SSRF</h5>
+              <span class="badge bg-warning text-dark vuln-badge">HIGH · CVE-2021-3749</span>
+            </div>
+            <p class="card-text small text-muted"><code>axios@0.21.1</code> — redirects to internal services. CVSS <strong>7.5</strong>.</p>
+            <a href="/api/fetch?url=http://localhost:3000/health" class="btn btn-sm btn-warning">Try Demo →</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-6 col-xl-4">
+        <div class="card demo-card high h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <h5 class="card-title mb-0">📂 Path Traversal</h5>
+              <span class="badge bg-warning text-dark vuln-badge">HIGH</span>
+            </div>
+            <p class="card-text small text-muted">File endpoint has no sanitization — <code>../../etc/passwd</code> works.</p>
+            <a href="/api/file?name=sample.txt" class="btn btn-sm btn-warning">Try Demo →</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-6 col-xl-4">
+        <div class="card demo-card high h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <h5 class="card-title mb-0">🧬 Prototype Pollution</h5>
+              <span class="badge bg-warning text-dark vuln-badge">HIGH · CVE-2020-8203</span>
+            </div>
+            <p class="card-text small text-muted"><code>lodash@4.17.15</code> merge pollutes <code>Object.prototype</code>. CVSS <strong>7.4</strong>.</p>
+            <code class="small d-block mt-2">POST /api/merge</code>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-6 col-xl-4">
+        <div class="card demo-card high h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <h5 class="card-title mb-0">🔐 JWT Alg Confusion</h5>
+              <span class="badge bg-warning text-dark vuln-badge">HIGH · CVE-2022-23529</span>
+            </div>
+            <p class="card-text small text-muted"><code>jsonwebtoken@8.5.1</code> — accepts unsigned <code>none</code> algorithm. CVSS <strong>6.4</strong>.</p>
+            <code class="small d-block mt-2">GET /api/admin</code>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-6 col-xl-4">
+        <div class="card demo-card critical h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <h5 class="card-title mb-0">🖼️ Template Injection</h5>
+              <span class="badge bg-danger vuln-badge">CRITICAL · CVE-2022-29078</span>
+            </div>
+            <p class="card-text small text-muted"><code>ejs@3.1.6</code> — RCE via template injection. CVSS <strong>9.8</strong>.</p>
+            <span class="badge bg-info text-dark mt-2">Detected by Dynatrace at Runtime</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <hr class="my-5">
+    <div class="text-center text-muted small">
+      <a href="https://docs.dynatrace.com/docs/deliver/site-reliability-guardian" target="_blank">Dynatrace Site Reliability Guardian</a> ·
+      <a href="https://docs.dynatrace.com/docs/protect/application-security" target="_blank">Dynatrace Application Security</a> ·
+      <a href="https://github.com/brunoxy01/srg-vulnerable-app" target="_blank">GitHub Repo</a>
+    </div>
+  </div>
+</body>
+</html>
