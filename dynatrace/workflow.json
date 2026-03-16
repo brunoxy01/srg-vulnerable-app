@@ -1,14 +1,8 @@
 {
   "title": "SRG Security Validation — srg-vulnerable-app",
-  "description": "Triggered by GitHub Actions after each deployment. Evaluates the SRG Guardian and sets the pipeline status.",
-  "isPrivate": false,
-  "trigger": {
-    "schedule": {
-      "rule": null,
-      "isActive": false
-    },
-    "eventTrigger": null
-  },
+  "description": "Disparado pelo GitHub Actions após cada deploy. Avalia o SRG Guardian e bloqueia se houver CVEs críticos.",
+  "schemaVersion": 3,
+  "trigger": {},
   "tasks": {
     "run_validation": {
       "name": "run_validation",

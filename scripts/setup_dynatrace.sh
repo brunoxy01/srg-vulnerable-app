@@ -86,13 +86,21 @@ fi
 echo -e "${GREEN}✅ Authenticated${NC}"
 echo ""
 
+# ── (Opcional) Listar guardians existentes para referência ───────────────────
+echo -e "${BLUE}📋 Guardians existentes na tenant:${NC}"
+curl -s "${DT_TENANT_URL}/platform/site-reliability-guardian/v1/guardians" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/json" \
+  | grep -o '"name":"[^"]*"\|"id":"[^"]*"' | head -20 || true
+echo ""
+
 # ── Create SRG Guardian ───────────────────────────────────────────────────────
-echo -e "${YELLOW}🛡️  Creating SRG Guardian...${NC}"
+echo -e "${YELLOW}🛡️  Criando SRG Guardian...${NC}"
 
 GUARDIAN_JSON=$(cat dynatrace/guardian.json)
 
 GUARDIAN_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-  -X POST "${DT_TENANT_URL}/api/site-reliability-guardian/v1/guardians" \
+  -X POST "${DT_TENANT_URL}/platform/site-reliability-guardian/v1/guardians" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "$GUARDIAN_JSON")
@@ -102,18 +110,25 @@ GUARDIAN_BODY=$(echo "$GUARDIAN_RESPONSE" | grep -v "HTTP_STATUS:")
 
 if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
   GUARDIAN_ID=$(echo "$GUARDIAN_BODY" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-  echo -e "${GREEN}✅ Guardian created — ID: ${GUARDIAN_ID}${NC}"
+  echo -e "${GREEN}✅ Guardian criado — ID: ${GUARDIAN_ID}${NC}"
 else
-  echo -e "${RED}❌  Failed to create guardian (HTTP $HTTP_STATUS)${NC}"
-  echo "Response: $GUARDIAN_BODY"
+  echo -e "${RED}❌  Falha ao criar Guardian (HTTP $HTTP_STATUS)${NC}"
+  echo ""
+  echo -e "${YELLOW}Resposta da API:${NC}"
+  echo "$GUARDIAN_BODY"
+  echo ""
+  echo -e "${YELLOW}Possíveis causas:${NC}"
+  echo "  • Escopo srg:guardians:write não habilitado no OAuth client"
+  echo "  • Tenant não tem Application Security / SRG habilitado"
+  echo ""
   exit 1
 fi
 
 # ── Create Automation Workflow ────────────────────────────────────────────────
 echo ""
-echo -e "${YELLOW}⚙️  Creating Automation Workflow...${NC}"
+echo -e "${YELLOW}⚙️  Criando Automation Workflow...${NC}"
 
-# Inject guardian ID into workflow template
+# Injeta o ID do Guardian no template do workflow
 WORKFLOW_JSON=$(cat dynatrace/workflow.json | sed "s/GUARDIAN_ID_PLACEHOLDER/${GUARDIAN_ID}/g")
 
 WORKFLOW_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
@@ -127,31 +142,37 @@ WORKFLOW_BODY=$(echo "$WORKFLOW_RESPONSE" | grep -v "HTTP_STATUS:")
 
 if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
   WORKFLOW_ID=$(echo "$WORKFLOW_BODY" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-  echo -e "${GREEN}✅ Workflow created — ID: ${WORKFLOW_ID}${NC}"
+  echo -e "${GREEN}✅ Workflow criado — ID: ${WORKFLOW_ID}${NC}"
 else
-  echo -e "${RED}❌  Failed to create workflow (HTTP $HTTP_STATUS)${NC}"
-  echo "Response: $WORKFLOW_BODY"
+  echo -e "${RED}❌  Falha ao criar Workflow (HTTP $HTTP_STATUS)${NC}"
+  echo ""
+  echo -e "${YELLOW}Resposta da API:${NC}"
+  echo "$WORKFLOW_BODY"
+  echo ""
+  echo -e "${YELLOW}Possíveis causas:${NC}"
+  echo "  • Escopo automation:workflows:write não habilitado no OAuth client"
+  echo ""
   exit 1
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║   ✅  Setup complete!                                        ║${NC}"
+echo -e "${GREEN}║   ✅  Setup concluído!                                       ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${YELLOW}Add these secrets to your GitHub repository:${NC}"
+echo -e "${YELLOW}Adicione estes secrets no seu repositório GitHub:${NC}"
 echo "  Settings → Secrets and variables → Actions → New repository secret"
 echo ""
 echo -e "  ${BLUE}DT_CLIENT_ID${NC}     = $DT_CLIENT_ID"
-echo -e "  ${BLUE}DT_CLIENT_SECRET${NC} = <your secret>"
+echo -e "  ${BLUE}DT_CLIENT_SECRET${NC} = <seu secret>"
 echo -e "  ${BLUE}DT_TENANT_URL${NC}    = $DT_TENANT_URL"
-echo -e "  ${BLUE}DT_WORKFLOW_ID${NC}   = ${WORKFLOW_ID}"
+echo -e "  ${BLUE}DT_WORKFLOW_ID${NC}   = ${WORKFLOW_ID}   ← este é o mais importante!"
 echo -e "  ${BLUE}DT_GUARDIAN_ID${NC}   = ${GUARDIAN_ID}"
 echo ""
-echo -e "${BLUE}Guardian dashboard:${NC}"
-echo "  ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian/guardian/${GUARDIAN_ID}"
+echo -e "${BLUE}Guardian no Dynatrace:${NC}"
+echo "  ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian"
 echo ""
-echo -e "${BLUE}Workflow dashboard:${NC}"
-echo "  ${DT_TENANT_URL}/ui/apps/dynatrace.automations/workflows/${WORKFLOW_ID}"
+echo -e "${BLUE}Workflow no Dynatrace:${NC}"
+echo "  ${DT_TENANT_URL}/ui/apps/dynatrace.automations"
 echo ""
