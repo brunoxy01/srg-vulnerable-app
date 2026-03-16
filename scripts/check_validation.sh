@@ -83,14 +83,36 @@ echo ""
 # Evita o 403 do Automation API (não há scope para ler execuções de outro user)
 echo -e "${YELLOW}🔍 Consultando security.events via DQL...${NC}"
 
-# Storage Query API usa .apps.dynatrace.com (não .live.)
-QUERY_RESPONSE=$(curl -s -X POST "${DT_TENANT_URL}/platform/storage/query/v1/query:execute" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "fetch security.events | dedup {vulnerability.display_id, affected_entity.id} | filter affected_entity.type == \\"SERVICE\\" | filter vulnerability.resolution.status != \\"RESOLVED\\" | filter vulnerability.parent.mute.status != \\"MUTED\\" | filter vulnerability.mute.status != \\"MUTED\\" | summarize criticalCount = countDistinct(if(vulnerability.risk.level == \\"CRITICAL\\", vulnerability.display_id)), highCount = countDistinct(if(vulnerability.risk.level == \\"HIGH\\", vulnerability.display_id))",
-    "requestTimeoutMilliseconds": 30000
-  }')
+# Usa python3 para construir e enviar o JSON (evita problemas de escaping bash)
+QUERY_RESPONSE=$(python3 - "$TOKEN" "$DT_TENANT_URL" << 'PYEOF'
+import sys, json, urllib.request
+
+token = sys.argv[1]
+tenant = sys.argv[2]
+query = (
+    'fetch security.events'
+    ' | dedup {vulnerability.display_id, affected_entity.id}'
+    ' | filter affected_entity.type == "SERVICE"'
+    ' | filter vulnerability.resolution.status != "RESOLVED"'
+    ' | filter vulnerability.parent.mute.status != "MUTED"'
+    ' | filter vulnerability.mute.status != "MUTED"'
+    ' | summarize'
+    '     criticalCount = countDistinct(if(vulnerability.risk.level == "CRITICAL", vulnerability.display_id)),'
+    '     highCount     = countDistinct(if(vulnerability.risk.level == "HIGH", vulnerability.display_id))'
+)
+body = json.dumps({'query': query, 'requestTimeoutMilliseconds': 30000}).encode()
+req = urllib.request.Request(
+    f'{tenant}/platform/storage/query/v1/query:execute',
+    data=body,
+    headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+)
+try:
+    with urllib.request.urlopen(req) as r:
+        print(r.read().decode())
+except urllib.error.HTTPError as e:
+    print(json.dumps({'error': e.code, 'message': e.read().decode()}))
+PYEOF
+)
 
 echo "  [debug] DQL response: $(echo \"$QUERY_RESPONSE\" | head -c 600)"
 echo ""
