@@ -30,7 +30,7 @@ NC='\033[0m'
 
 # ── Config ────────────────────────────────────────────────────────────────────
 AUTH_URL="https://sso.dynatrace.com/sso/oauth2/token"
-OAUTH_SCOPE="automation:workflows:read automation:executions:read"
+OAUTH_SCOPE="automation:workflows:run"
 DT_TENANT_URL="${DT_TENANT_URL:-https://fov31014.apps.dynatrace.com}"
 MAX_WAIT_TIME="${MAX_WAIT_TIME:-300}"
 POLL_INTERVAL="${POLL_INTERVAL:-15}"
