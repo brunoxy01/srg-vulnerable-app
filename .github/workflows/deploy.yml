@@ -7,16 +7,16 @@ name: Build, Deploy & SRG Security Gate
 #   job: build ──────────►  job: security-gate  ────────► SRG Guardian
 #   (build + push GHCR)      ① instala OneAgent             avalia CVEs
 #                            ② docker compose up            → bloqueia se
-#                            ③ aguarda AppSec (~8min)         vulnerável
+#                            ③ aguarda AppSec (~5min)         vulnerável
 #                            ④ dispara SRG workflow
 #                            ⑤ lê resultado → exit 1 = BLOQUEADO
-#                            ⑥ docker compose down
+#                            ⑥ para stack (cleanup)
 #
 # O runner ubuntu-latest é uma VM Linux completa — o OneAgent é instalado
 # nela durante o pipeline, monitora o processo Node.js em tempo real e o
 # Application Security detecta os CVEs dos pacotes vulneráveis.
 #
-# Secrets necessários (apenas 5 — sem SSH, sem servidor fixo):
+# Secrets necessários (apenas 6 — sem SSH, sem servidor fixo):
 #   DOCKER_USERNAME     seu username do GitHub (ex: brunoxy01)
 #   DOCKER_PASSWORD     GitHub PAT com escopo write:packages
 #   DT_API_TOKEN        token clássico Dynatrace com escopo InstallerDownload
@@ -256,42 +256,7 @@ jobs:
           curl -sf -X POST http://localhost:3000/api/merge -H 'Content-Type: application/json' -d '{"a": 1}' > /dev/null 2>&1 || true
           echo "✅ Janela de análise concluída"
 
-      # ── ④ Enviar evento de deployment ao Dynatrace ────────────────────────
-      - name: Enviar deployment event ao Dynatrace
-        continue-on-error: true
-        env:
-          DT_CLIENT_ID:     ${{ secrets.DT_CLIENT_ID }}
-          DT_CLIENT_SECRET: ${{ secrets.DT_CLIENT_SECRET }}
-          DT_TENANT_URL:    https://fov31014.apps.dynatrace.com
-          APP_VERSION:      ${{ needs.build.outputs.version }}
-          GIT_COMMIT:       ${{ github.sha }}
-          GITHUB_RUN_ID:    ${{ github.run_id }}
-        run: |
-          TOKEN=$(curl -s -X POST "https://sso.dynatrace.com/sso/oauth2/token" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "grant_type=client_credentials&client_id=${DT_CLIENT_ID}&client_secret=${DT_CLIENT_SECRET}&scope=openpipeline:events:ingest" \
-            | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
-
-          if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-            DT_LIVE_URL=$(echo "${DT_TENANT_URL}" | sed 's/\.apps\.dynatrace\.com/.live.dynatrace.com/')
-            curl -s -X POST "${DT_LIVE_URL}/platform/ingest/v1/events" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{
-                \"eventType\": \"CUSTOM_DEPLOYMENT\",
-                \"title\": \"Deploy srg-vulnerable-app v${APP_VERSION}\",
-                \"properties\": {
-                  \"dt.event.deployment.name\":    \"srg-vulnerable-app\",
-                  \"dt.event.deployment.version\": \"${APP_VERSION}\",
-                  \"git.commit\": \"${GIT_COMMIT}\",
-                  \"ci.pipeline\": \"${GITHUB_RUN_ID}\"
-                }
-              }" && echo "✅ Deployment event enviado" || echo "⚠️  403 ou erro - evento não enviado (não bloqueia)"
-          else
-            echo "⚠️  Token não obtido — evento pulado"
-          fi
-
-      # ── ⑤ Disparar e verificar validação SRG ─────────────────────────────
+      # ── ④ Disparar validação SRG ─────────────────────────────────────────
       - name: Disparar validação SRG
         env:
           DT_CLIENT_ID:     ${{ secrets.DT_CLIENT_ID }}
@@ -304,6 +269,7 @@ jobs:
           echo "🚀 Disparando Site Reliability Guardian validation..."
           ./scripts/trigger_validation.sh
 
+      # ── ⑤ Aguardar resultado SRG ─────────────────────────────────────────
       - name: Aguardar e verificar resultado SRG
         # ⚠️  Exit 1 se o Guardian encontrar vulnerabilidades → pipeline BLOQUEADA
         env:
@@ -317,7 +283,7 @@ jobs:
           chmod +x ./scripts/check_validation.sh
           ./scripts/check_validation.sh
 
-      # ── ⑥ Parar a stack (sempre, mesmo em falha) ─────────────────────────
+      # ── ⑥ Parar stack (sempre, mesmo em falha) ──────────────────────────
       - name: Parar aplicação
         if: always()
         run: |

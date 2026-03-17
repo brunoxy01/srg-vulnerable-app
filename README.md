@@ -1,363 +1,299 @@
 # SRG Vulnerable App — Dynatrace Security Gate Demo
 
-> **⚠️ FOR DEMO PURPOSES ONLY. Do not deploy to production.**
+> **⚠️ APLICAÇÃO INTENCIONALMENTE VULNERÁVEL — apenas para demonstração. Não utilize em produção.**
 
-A deliberately vulnerable Node.js application used to demonstrate how
+## O que é este projeto?
+
+Uma aplicação **Node.js propositalmente vulnerável** que demonstra como o
 [Dynatrace Site Reliability Guardian (SRG)](https://docs.dynatrace.com/docs/deliver/site-reliability-guardian)
-automatically **blocks CI/CD deployments** when Dynatrace Application Security detects
-critical or high-severity vulnerabilities at runtime.
+pode atuar como **security gate no CI/CD**, **bloqueando deployments automaticamente**
+quando o [Dynatrace Application Security](https://docs.dynatrace.com/docs/protect/application-security)
+detecta vulnerabilidades de alta severidade em runtime.
+
+### Conceito
+
+O pipeline faz *push* → *build* → *deploy temporário* → **SRG avalia** → bloqueia ou aprova.  
+O OneAgent instrumenta o processo Node.js em tempo real, detecta os CVEs dos pacotes npm
+e o Guardian decide se o deploy passa ou não — tudo **automatizado, sem intervenção humana**.
 
 ---
 
-## Architecture
+## Arquitetura
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                          GitHub Actions CI/CD                            │
-│                                                                          │
-│  push/PR ──► build ──► deploy ──► 🔴 SRG Security Gate ──► (blocked!)  │
-│                         │                      │                         │
-│             (docker     │          trigger + poll SRG validation        │
-│              compose)   │          fail pipeline if vulns found         │
-└─────────────────────────┼──────────────────────────────────────────────-┘
-                          ▼
-            ┌─────────────────────────┐
-            │  GitHub Actions Runner  │
-            │  (ubuntu-latest + OA)   │
-            │  ┌─────────────────┐   │
-            │  │ vulnerable-app  │   │  ◄── OneAgent monitors process
-            │  │  (Node.js)      │   │       and sends data to Dynatrace
-            │  └─────────────────┘   │
-            │  ┌─────────────────┐   │
-            │  │     MySQL       │   │
-            │  └─────────────────┘   │
-            └─────────────────────────┘
-                          │
-                          ▼
-            ┌─────────────────────────────────┐
-            │   Dynatrace                     │
-            │   fov31014.apps.dynatrace.com   │
-            │                                 │
-            │  Application Security           │
-            │    → evaluates security         │
-            │      problems via Davis Score   │
-            │                                 │
-            │  Site Reliability Guardian      │
-            │    Objective: 0 HIGH vulns      │
-            │    Result:    ❌ FAIL → block!  │
-            └─────────────────────────────────┘
+  GitHub Actions (ubuntu-latest)                      Dynatrace
+ ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
+ │                                      │     │                              │
+ │  ┌──────────┐    ┌────────────────┐  │     │  Application Security        │
+ │  │ job:     │    │ job:           │  │     │   ↳ OneAgent detecta CVEs    │
+ │  │ build    │───►│ security-gate  │──┼────►│     dos pacotes npm em       │
+ │  │          │    │                │  │     │     runtime                  │
+ │  │ build +  │    │ ① OneAgent     │  │     │                              │
+ │  │ push     │    │ ② MySQL docker │  │     │  Site Reliability Guardian   │
+ │  │ GHCR     │    │ ③ Node.js host │  │     │   ↳ Avalia security_events  │
+ │  │          │    │ ④ Espera 5min  │  │     │     via DQL                 │
+ │  │          │    │ ⑤ Trigger SRG  │  │     │   ↳ HIGH vulns > limite?    │
+ │  │          │    │ ⑥ Poll result  │  │     │     → ❌ FAIL → exit 1      │
+ │  └──────────┘    └────────────────┘  │     │     → ✅ PASS → exit 0      │
+ │                                      │     │                              │
+ └──────────────────────────────────────┘     └──────────────────────────────┘
+           VM efêmera — descartada                   fov31014.apps
+           após o pipeline terminar                  .dynatrace.com
+```
+
+**Pontos-chave:**
+- **100% cloud** — roda em `ubuntu-latest` do GitHub, sem servidor fixo, sem self-hosted runner
+- **Node.js no host** (não dentro de Docker) para que o OneAgent instrumente o processo e detecte os CVEs via Runtime Vulnerability Detection
+- **MySQL em Docker** — dependência da app (SQL injection demo)
+- **VM descartada** — quando o pipeline termina, o runner é destruído
+
+---
+
+## Vulnerabilidades incluídas
+
+A aplicação inclui **vulnerabilidades no código** e **pacotes npm com CVEs conhecidos**:
+
+### Pacotes npm vulneráveis (detectados pelo OneAgent)
+
+| Pacote | Versão | CVE | Severidade | Descrição |
+|--------|--------|-----|------------|-----------|
+| `node-serialize` | 0.0.4 | CVE-2017-5941 | **CRITICAL** (9.8) | Insecure Deserialization → RCE |
+| `ejs` | 3.1.6 | CVE-2022-29078 | **CRITICAL** (9.8) | Template Injection → RCE |
+| `lodash` | 4.17.15 | CVE-2020-8203 | **HIGH** (7.4) | Prototype Pollution |
+| `axios` | 0.21.1 | CVE-2021-3749 | **HIGH** (7.5) | ReDoS / SSRF |
+| `jsonwebtoken` | 8.5.1 | CVE-2022-23529 | **MEDIUM** (6.4) | Algorithm confusion |
+
+### Vulnerabilidades no código-fonte
+
+| Tipo | Endpoint | Descrição |
+|------|----------|-----------|
+| SQL Injection | `POST /login` | Concatenação direta de input no SQL |
+| Reflected XSS | `GET /search?q=` | Input refletido sem sanitização |
+| Command Injection | `GET /ping?host=` | Execução de comando sem validação |
+| SSRF | `GET /api/fetch?url=` | Fetch de URL arbitrária |
+| Path Traversal | `GET /api/file?name=` | Acesso a arquivos fora do diretório |
+| Prototype Pollution | `POST /api/merge` | Merge profundo sem proteção |
+| Insecure Deserialization | `POST /api/profile` | `node-serialize.unserialize()` |
+| Hardcoded Credentials | `server.js` | Credenciais no código |
+
+---
+
+## Como o SRG Security Gate funciona
+
+```
+ Pacotes npm vulneráveis          Dynatrace Application Security         SRG Guardian
+ (node-serialize, ejs, ...)  →    OneAgent detecta em runtime      →     Avalia via DQL
+                                  e reporta como Security Problems       e bloqueia pipeline
+```
+
+1. O **OneAgent** é instalado no runner e instrumenta o processo Node.js
+2. O **Application Security** detecta os CVEs dos pacotes npm carregados em runtime
+3. O **Automation Workflow** é disparado via API OAuth2
+4. O **Site Reliability Guardian** executa uma query DQL que conta as vulnerabilidades HIGH abertas
+5. Se o resultado exceder o limite configurado → **FAIL** → pipeline bloqueada (`exit 1`)
+
+### Objetivo do Guardian
+
+| Objetivo | Query DQL | Condição de falha |
+|----------|-----------|-------------------|
+| Vulnerabilidades HIGH detectadas | `fetch security.events \| filter vulnerability.risk.level == "HIGH" AND vulnerability.resolution.status == "OPEN" \| summarize count` | count > 1 |
+
+> O Dynatrace usa o **Davis Security Score** (não o CVSS bruto) que considera reachability,
+> disponibilidade de exploit e exposição do asset.
+
+---
+
+## Estrutura do projeto
+
+```
+srg-vulnerable-app/
+├── app/
+│   ├── server.js              # App Node.js com vulnerabilidades intencionais
+│   ├── package.json           # Dependências com CVEs conhecidos
+│   ├── views/
+│   │   ├── index.ejs          # Página inicial com links para demos
+│   │   ├── login.ejs          # Demo de SQL Injection
+│   │   └── search.ejs         # Demo de Reflected XSS
+│   └── data/
+│       └── sample.txt         # Arquivo-alvo para Path Traversal
+├── init.sql                   # Seed do banco MySQL
+├── Dockerfile                 # node:18-alpine para build da imagem
+├── docker-compose.yml         # Stack local (app + mysql)
+├── .env.example               # Template de variáveis de ambiente
+├── .github/
+│   └── workflows/
+│       └── deploy.yml         # Pipeline: Build → Deploy → SRG Gate
+├── dynatrace/
+│   ├── guardian.json          # Definição do Guardian (objetivos de segurança)
+│   └── workflow.json          # Template do Automation Workflow
+├── scripts/
+│   ├── setup_dynatrace.sh     # Cria Guardian + Workflow via API (executar 1x)
+│   ├── create_workflow.sh     # Cria apenas o Workflow via API
+│   ├── trigger_validation.sh  # Dispara execução do Workflow
+│   └── check_validation.sh   # Poll do resultado — exit 1 se vulnerável
+└── README.md
 ```
 
 ---
 
-## Vulnerabilities Included
+## Pré-requisitos
 
-The app includes **code-level vulnerabilities** and **vulnerable npm packages**:
-
-| # | Vulnerability | Package | CVE | CVSS |
-|---|--------------|---------|-----|------|
-| 1 | Hardcoded Credentials | (code) | — | — |
-| 2 | SQL Injection | (code) | — | CRITICAL |
-| 3 | Reflected XSS | (code) | — | HIGH |
-| 4 | Command Injection | (code) | — | CRITICAL |
-| 5 | Insecure Deserialization / **RCE** | `node-serialize@0.0.4` | CVE-2017-5941 | 9.8 |
-| 6 | SSRF | `axios@0.21.1` | CVE-2021-3749 | 7.5 |
-| 7 | Path Traversal | (code) | — | HIGH |
-| 8 | Prototype Pollution | `lodash@4.17.15` | CVE-2020-8203 | 7.4 |
-| 9 | JWT Algorithm Confusion | `jsonwebtoken@8.5.1` | CVE-2022-23529 | 6.4 |
-| 10 | Template Injection / **RCE** | `ejs@3.1.6` | CVE-2022-29078 | 9.8 |
-
-### How the SRG Security Gate works
-
-The Site Reliability Guardian evaluates **security problems** detected by Dynatrace
-Application Security in the environment. Dynatrace assigns a **Davis Security Score**
-(not raw CVSS) that considers reachability, exploit availability, and asset exposure.
-
-The Guardian objectives query the Dynatrace Security Problems API via DQL and block
-the pipeline when thresholds are exceeded (e.g. any HIGH-severity problem = FAIL).
+| Ferramenta | Versão | Para quê |
+|------------|--------|----------|
+| Git | qualquer | Clonar o repositório |
+| Docker + Docker Compose | v2+ | Rodar localmente |
+| Conta GitHub | — | CI/CD pipeline |
+| Conta Dynatrace SaaS | Gen 3 (Platform) | Application Security + SRG |
 
 ---
 
-## Prerequisites
+## Setup rápido
 
-| Tool | Version |
-|------|---------|
-| Docker + Docker Compose | v2+ |
-| Git | any |
-| Dynatrace account | [fov31014.apps.dynatrace.com](https://fov31014.apps.dynatrace.com) |
-| Dynatrace OneAgent | installed on your Docker host |
-| GitHub account | for CI/CD |
-
----
-
-## Step 1 — Clone & Run Locally
+### 1. Clonar e rodar localmente
 
 ```bash
 git clone https://github.com/brunoxy01/srg-vulnerable-app.git
 cd srg-vulnerable-app
-
-cp .env.example .env        # edit if you want custom passwords
-
-docker compose up -d        # starts vulnerable-app + mysql
+cp .env.example .env
+docker compose up -d
 ```
 
-Open <http://localhost:3000> to see the demo.
+Acesse http://localhost:3000 — a aplicação está rodando.
 
 ```bash
-# Health check
-curl http://localhost:3000/health
-
-# Full vulnerability list (JSON)
-curl http://localhost:3000/vulnerabilities
+curl http://localhost:3000/health           # Health check
+curl http://localhost:3000/vulnerabilities  # Lista de vulns (JSON)
 ```
 
----
+### 2. Criar OAuth2 Client no Dynatrace
 
-## Step 2 — Install Dynatrace OneAgent on the Docker Host
+Acesse o **Account Management**: https://myaccount.dynatrace.com/iam/oauth-clients
 
-OneAgent must run on the **host** machine (not inside the container).
-It automatically discovers Docker containers and scans Node.js processes for CVEs.
+Crie um client com os scopes:
+- `automation:workflows:read`
+- `automation:workflows:write`
+- `automation:workflows:run`
+- `srg:guardians:read`
+- `srg:guardians:write`
+- `security:findings:read`
 
-1. Open: <https://fov31014.apps.dynatrace.com/ui/hub/ext/dynatrace.linux.oneagent>
-2. Follow the Linux installer instructions (copy & run the `wget` command).
-3. Verify the agent is running:
-   ```bash
-   systemctl status dynatrace-oneagent
-   ```
-4. In the Dynatrace UI, go to **Infrastructure → Hosts** and confirm your host appears.
-5. After starting `docker compose up`, go to **Application Security → Vulnerabilities** —
-   within 2–5 minutes the security problems from the environment
-   will appear automatically.
+> O Client ID começa com `dt0s02.` e o Secret tem o formato `dt0s02.XXXX.XXXX`.
 
----
-
-## Step 3 — Criar o OAuth2 Client no Dynatrace
-
-No **novo Dynatrace Platform** (SaaS Gen 3), os OAuth clients ficam no **Account Management** — fora da tenant, no portal de conta.
-
-1. Acesse o **Account Management**:
-   <https://myaccount.dynatrace.com/iam/oauth-clients>
-   *(login com a mesma conta da sua tenant)*
-
-2. Clique em **Create client**.
-
-3. Preencha:
-   - **Name:** `srg-security-gate`
-   - **Account:** selecione sua conta
-
-4. Ative os **scopes** (permissões):
-   - `automation:workflows:read`
-   - `automation:workflows:write`
-   - `automation:workflows:run`
-   - `srg:guardians:read`
-   - `srg:guardians:write`
-   - `security:findings:read`
-   - `openpipeline:events:ingest`
-
-5. Clique em **Save**. O Dynatrace exibe o **Client ID** e **Client Secret** uma única vez — copie os dois imediatamente.
-
-   > O Client ID começa com `dt0s02.` e o Secret tem o formato `dt0s02.XXXX.XXXX`.
-
-6. Adicione ao seu `.env`:
-   ```
-   DT_CLIENT_ID=dt0s02.XXXXXXXXX
-   DT_CLIENT_SECRET=dt0s02.XXXXXXXXX.XXXXXXXX
-   ```
-
-> **Alternativa:** em algumas tenants você encontra os OAuth clients em **Settings → Connections → OAuth clients** dentro da própria tenant. Se não aparecer, use o Account Management acima.
-
----
-
-## Step 4 — Create the SRG Guardian & Automation Workflow
-
-Run the setup script **once**. It creates the Guardian and Workflow in your Dynatrace
-tenant and prints the IDs needed as GitHub secrets.
+### 3. Criar o Guardian e Workflow
 
 ```bash
 chmod +x scripts/setup_dynatrace.sh
 ./scripts/setup_dynatrace.sh
 ```
 
-Expected output:
-```
-✅ Authenticated
-✅ Guardian created — ID: abc123...
-✅ Workflow created — ID: def456...
+Isso cria o Guardian e o Automation Workflow na tenant e imprime os IDs.
 
-Add these secrets to your GitHub repository:
-  DT_CLIENT_ID     = dt0s02.XXXXXXX
-  DT_CLIENT_SECRET = <your secret>
-  DT_TENANT_URL    = https://fov31014.apps.dynatrace.com
-  DT_WORKFLOW_ID   = def456...
-  DT_GUARDIAN_ID   = abc123...
-```
+### 4. Configurar GitHub Secrets
 
-Verify in the UI:
+GitHub → **Settings → Secrets and variables → Actions**:
 
-- **Guardian**: <https://fov31014.apps.dynatrace.com/ui/apps/dynatrace.site.reliability.guardian>
-- **Workflow**: <https://fov31014.apps.dynatrace.com/ui/apps/dynatrace.automations>
+| Secret | Descrição |
+|--------|-----------|
+| `DOCKER_USERNAME` | Username do GitHub (ex: `brunoxy01`) |
+| `DOCKER_PASSWORD` | GitHub PAT com escopo `write:packages` |
+| `DT_API_TOKEN` | Token clássico Dynatrace com escopo `InstallerDownload` |
+| `DT_CLIENT_ID` | OAuth2 Client ID (`dt0s02.XXXX`) |
+| `DT_CLIENT_SECRET` | OAuth2 Client Secret |
+| `DT_WORKFLOW_ID` | ID do Workflow (saída do `setup_dynatrace.sh`) |
 
-### What the Guardian checks
-
-| Objective | DQL | Fail condition |
-|-----------|-----|----------------|
-| Sem vulnerabilidades CRITICAL | `fetch security_problems \| filter status == "OPEN" and riskLevel == "CRITICAL" \| count` | count > 0 |
-| Vulnerabilidades HIGH | `fetch security_problems \| filter status == "OPEN" and riskLevel == "HIGH" \| count` | count > 1 |
-
----
-
-## Step 5 — Configurar os GitHub Actions Secrets
-
-O pipeline roda **100% no cloud do GitHub** (`ubuntu-latest`) — sem servidor fixo, sem self-hosted runner, sem SSH.
-
-### Como funciona
-
-```
-[ubuntu-latest — VM Linux efêmera do GitHub]              [Dynatrace]
-
-job: build              job: security-gate
-────────────       ──────────────────────────────────────────────────
-build image    →   ① instala OneAgent na VM do runner
-push GHCR          ② docker compose up (sobe app vulnerável)
-                   ③ aguarda AppSec detectar CVEs (~8 min)
-                   ④ dispara SRG Workflow
-                   ⑤ polling do resultado → exit 1 = BLOQUEADO
-                   ⑥ docker compose down  (VM é descartada)
-```
-
-O runner `ubuntu-latest` é uma VM Linux completa. O OneAgent é instalado nela durante o pipeline, monitora o processo Node.js em tempo real e o Application Security detecta os CVEs dos pacotes vulneráveis. Quando o job termina, a VM é descartada pelo GitHub automaticamente.
-
-### Secrets necessários (apenas 6 — sem SSH, sem servidor fixo)
-
-GitHub → **Settings → Secrets and variables → Actions → New repository secret**:
-
-| Secret | Como obter |
-|--------|------------|
-| `DOCKER_USERNAME` | Seu username do GitHub: `brunoxy01` |
-| `DOCKER_PASSWORD` | GitHub → Settings → Developer settings → **Personal access tokens** → escopo `write:packages` |
-| `DT_API_TOKEN` | Dynatrace → **Access tokens** → Generate new token → escopo `InstallerDownload` *(ver abaixo)* |
-| `DT_CLIENT_ID` | Account Management → OAuth clients (Step 3) |
-| `DT_CLIENT_SECRET` | Account Management → OAuth clients (Step 3) |
-| `DT_WORKFLOW_ID` | Saída do `./scripts/setup_dynatrace.sh` (Step 4) |
-
-### Como criar o DT_API_TOKEN (token para baixar o OneAgent)
-
-Esse token é diferente do OAuth2 — é um token clássico da tenant usado para fazer download do instalador do OneAgent.
-
-1. Acesse: <https://fov31014.apps.dynatrace.com/ui/apps/dynatrace.classic.tokens>
-2. Clique em **Generate new token**
-3. Nome: `oneagent-installer`
-4. Escopo: ✅ `InstallerDownload`
-5. Clique em **Generate token** e copie o valor (começa com `dt0c01.`)
-
----
-
-## Step 6 — Push to GitHub and Watch the Pipeline Fail
+### 5. Push e ver o pipeline ser bloqueado
 
 ```bash
-git add .
-git commit -m "feat: add vulnerable app for SRG demo"
 git push origin main
 ```
 
-Go to the **Actions** tab in GitHub. The pipeline runs three jobs:
+Na aba **Actions** do GitHub:
 
 ```
-build ✅  →  deploy ✅  →  security-gate ❌  BLOCKED
+build ✅  →  security-gate ❌  BLOCKED
 ```
 
-The `security-gate` job output:
-```
-❌  SRG VALIDATION FAILED — DEPLOYMENT BLOCKED
-⛔  Dynatrace Application Security detected vulnerabilities!
-  Objectives:  0 passed  |  1 failed  |  0 warnings
-
-  Review vulnerabilities:
-    https://fov31014.apps.dynatrace.com/ui/apps/dynatrace.classic.security.overview
-```
+O SRG detecta as vulnerabilidades HIGH e bloqueia o deploy automaticamente.
 
 ---
 
-## Step 7 — Fix the Vulnerabilities (Make the Gate Pass)
+## Como corrigir (desbloquear o pipeline)
 
-Create a fix branch that upgrades the vulnerable packages:
-
-```bash
-git checkout -b fix/upgrade-vulnerable-packages
-```
-
-Edit `app/package.json` — replace the vulnerable versions:
+Atualize os pacotes vulneráveis em `app/package.json`:
 
 ```json
-"ejs":            "3.1.6"   →  "3.1.10"
-"lodash":         "4.17.15" →  "4.17.21"
-"axios":          "0.21.1"  →  "1.7.9"
-"node-serialize": "0.0.4"   →  remove (replace with JSON.parse/stringify)
-"jsonwebtoken":   "8.5.1"   →  "9.0.2"
+"ejs":            "3.1.10"    // era 3.1.6
+"lodash":         "4.17.21"   // era 4.17.15
+"axios":          "1.7.9"     // era 0.21.1
+"node-serialize": remover     // substituir por JSON.parse/stringify
+"jsonwebtoken":   "9.0.2"     // era 8.5.1
 ```
 
 ```bash
-git add app/package.json
-git commit -m "fix: upgrade vulnerable dependencies"
-git push origin fix/upgrade-vulnerable-packages
+git commit -am "fix: upgrade vulnerable dependencies"
+git push origin main
 ```
 
-Open a PR → merge to `main` → the pipeline now passes:
+O pipeline agora passa:
 
 ```
-build ✅  →  deploy ✅  →  security-gate ✅  PASSED
-```
-
----
-
-## File Structure
-
-```
-srg-vulnerable-app/
-├── app/
-│   ├── server.js            # Node.js app with intentional vulnerabilities
-│   ├── package.json         # Deps with known CVEs (node-serialize, ejs, lodash …)
-│   ├── views/
-│   │   ├── index.ejs        # Home page with vulnerability demo links
-│   │   ├── login.ejs        # SQL injection demo
-│   │   └── search.ejs       # Reflected XSS demo
-│   └── data/
-│       └── sample.txt       # Path traversal demo target
-├── init.sql                 # MySQL seed data
-├── Dockerfile               # node:18-alpine (OneAgent runs on host, not inside)
-├── docker-compose.yml       # vulnerable-app + mysql
-├── .env.example             # Environment variable template
-├── .gitignore
-├── .github/
-│   └── workflows/
-│       └── deploy.yml       # Build → Deploy → SRG Security Gate
-├── dynatrace/
-│   ├── guardian.json        # SRG Guardian definition (security objectives)
-│   └── workflow.json        # Dynatrace Automation Workflow template
-├── scripts/
-│   ├── setup_dynatrace.sh   # Creates Guardian + Workflow via API (run once)
-│   ├── trigger_validation.sh # Triggers SRG workflow execution
-│   └── check_validation.sh  # Polls result — exits 1 if vulnerabilities found
-└── README.md
+build ✅  →  security-gate ✅  PASSED
 ```
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| `❌ Authentication failed` | Verify `DT_CLIENT_ID` / `DT_CLIENT_SECRET` in `.env`. Check the OAuth scopes listed in Step 3. |
-| Vulnerabilities not appearing in Dynatrace | Ensure OneAgent is installed **on the Docker host** and the app is running (`docker compose ps`). Wait 2–5 minutes. |
-| `❌ Could not extract validation_status` | The workflow may not have a `run_validation` task. Re-run `setup_dynatrace.sh`. |
-| Guardian always passes even with vulns | Application Security may be disabled. Enable at: Settings → Application Security → Vulnerability Analytics. |
-| `invalid_scope` error on token request | Recreate the OAuth client and add all scopes listed in Step 3. |
+| Sintoma | Solução |
+|---------|---------|
+| `Authentication failed` | Verifique `DT_CLIENT_ID` / `DT_CLIENT_SECRET`. Recrie o OAuth client com os scopes listados acima. |
+| Vulnerabilidades não aparecem | O OneAgent precisa de até 5 minutos para detectar os CVEs. Verifique se a app está rodando e os endpoints foram acessados. |
+| `Could not extract validation_status` | O Workflow pode não ter a task `run_validation`. Execute `setup_dynatrace.sh` novamente. |
+| Guardian sempre passa | O Application Security pode estar desativado. Ative em: Settings → Application Security → Vulnerability Analytics. |
+| `invalid_scope` no token | Recrie o OAuth client com todos os scopes listados na seção 2. |
 
 ---
 
-## References
+## Tecnologias utilizadas
 
-- [Dynatrace Site Reliability Guardian](https://docs.dynatrace.com/docs/deliver/site-reliability-guardian)
-- [Dynatrace Application Security](https://docs.dynatrace.com/docs/protect/application-security)
-- [Dynatrace Automation Workflows](https://docs.dynatrace.com/docs/deliver/dynatrace-workflows)
+| Tecnologia | Uso |
+|------------|-----|
+| [Node.js](https://nodejs.org/) + [Express](https://expressjs.com/) | Aplicação web vulnerável |
+| [MySQL 8](https://www.mysql.com/) | Banco de dados (SQL injection demo) |
+| [Docker](https://www.docker.com/) | Containerização e build |
+| [GitHub Actions](https://github.com/features/actions) | CI/CD pipeline |
+| [Dynatrace OneAgent](https://docs.dynatrace.com/docs/setup-and-configuration/dynatrace-oneagent) | Instrumentação e monitoramento em runtime |
+| [Dynatrace Application Security](https://docs.dynatrace.com/docs/protect/application-security) | Detecção de vulnerabilidades em runtime |
+| [Dynatrace Site Reliability Guardian](https://docs.dynatrace.com/docs/deliver/site-reliability-guardian) | Security gate — avaliação automatizada |
+| [Dynatrace Automation Workflows](https://docs.dynatrace.com/docs/deliver/dynatrace-workflows) | Orquestração da validação SRG |
+
+---
+
+## Referências e links úteis
+
+### Documentação Dynatrace
+- [Site Reliability Guardian — Overview](https://docs.dynatrace.com/docs/deliver/site-reliability-guardian)
+- [Site Reliability Guardian — Create a guardian](https://docs.dynatrace.com/docs/deliver/site-reliability-guardian/how-to/create-guardian)
+- [Application Security — Overview](https://docs.dynatrace.com/docs/protect/application-security)
+- [Application Security — Vulnerability Analytics](https://docs.dynatrace.com/docs/protect/application-security/vulnerability-analytics)
 - [Davis Security Score](https://docs.dynatrace.com/docs/protect/application-security/vulnerability-analytics/davis-security-score)
+- [Automation Workflows](https://docs.dynatrace.com/docs/deliver/dynatrace-workflows)
+- [OneAgent — Setup](https://docs.dynatrace.com/docs/setup-and-configuration/dynatrace-oneagent)
+- [OAuth2 Client Credentials](https://docs.dynatrace.com/docs/manage/identity-access-management/access-tokens-and-oauth-clients/oauth-clients)
+
+### Repositório
+- **GitHub**: https://github.com/brunoxy01/srg-vulnerable-app
+- **Container Registry**: `ghcr.io/brunoxy01/srg-vulnerable-app`
+
+### CVEs utilizados neste demo
+- [CVE-2017-5941](https://nvd.nist.gov/vuln/detail/CVE-2017-5941) — node-serialize Remote Code Execution
+- [CVE-2022-29078](https://nvd.nist.gov/vuln/detail/CVE-2022-29078) — ejs Template Injection
+- [CVE-2020-8203](https://nvd.nist.gov/vuln/detail/CVE-2020-8203) — lodash Prototype Pollution
+- [CVE-2021-3749](https://nvd.nist.gov/vuln/detail/CVE-2021-3749) — axios ReDoS
+- [CVE-2022-23529](https://nvd.nist.gov/vuln/detail/CVE-2022-23529) — jsonwebtoken Algorithm Confusion
+
+---
+
+## Licença
+
+Este projeto é apenas para fins de demonstração e educação. Não possui licença para uso em produção.
