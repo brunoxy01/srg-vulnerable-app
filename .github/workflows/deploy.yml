@@ -105,6 +105,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -156,15 +161,50 @@ jobs:
 
           sudo systemctl status dynatrace-oneagent --no-pager 2>/dev/null || true
 
-      # ── ② Subir a aplicação vulnerável ────────────────────────────────────
-      - name: Subir aplicação vulnerável (docker compose)
+      # ── ② Subir MySQL e a aplicação vulnerável ────────────────────────────
+      # MySQL roda no Docker. A app Node.js roda DIRETAMENTE no host para
+      # que o OneAgent possa instrumentar o processo e detectar os CVEs
+      # dos pacotes npm em runtime (AppSec Runtime Vulnerability Detection).
+      - name: Subir MySQL (docker)
         run: |
-          export APP_VERSION="${APP_VERSION}"
-          export BUILD_NUMBER="${BUILD_NUMBER}"
-          docker compose pull
-          docker compose up -d
-          echo "✅ Stack iniciada"
-          docker compose ps
+          docker run -d \
+            --name srg-mysql \
+            -e MYSQL_ROOT_PASSWORD=rootpassword \
+            -e MYSQL_DATABASE=vulndb \
+            -p 3306:3306 \
+            mysql:8.0
+          echo "✅ MySQL iniciado"
+
+      - name: Aguardar MySQL ficar pronto
+        run: |
+          echo "⏳ Aguardando MySQL aceitar conexões..."
+          for i in $(seq 1 30); do
+            if docker exec srg-mysql mysqladmin ping -h localhost --silent 2>/dev/null; then
+              echo "✅ MySQL pronto"
+              break
+            fi
+            echo "   Tentativa $i/30..."
+            sleep 3
+          done
+
+      - name: Inicializar banco de dados
+        run: |
+          docker exec -i srg-mysql mysql -uroot -prootpassword vulndb < init.sql
+          echo "✅ Banco inicializado"
+
+      - name: Instalar dependências e iniciar app Node.js no host
+        run: |
+          cd app
+          npm install --legacy-peer-deps --omit=dev
+          echo "✅ Dependências instaladas"
+          echo ""
+          echo "🚀 Iniciando app Node.js no host (PID visível ao OneAgent)..."
+          DB_HOST=127.0.0.1 DB_USER=root DB_PASSWORD=rootpassword DB_NAME=vulndb \
+            PORT=3000 NODE_ENV=production \
+            node server.js &
+          APP_PID=$!
+          echo "$APP_PID" > /tmp/app_pid.txt
+          echo "✅ App iniciada (PID: $APP_PID)"
 
       - name: Aguardar health check
         run: |
@@ -280,7 +320,14 @@ jobs:
       # ── ⑥ Parar a stack (sempre, mesmo em falha) ─────────────────────────
       - name: Parar aplicação
         if: always()
-        run: docker compose down --volumes
+        run: |
+          if [ -f /tmp/app_pid.txt ]; then
+            APP_PID=$(cat /tmp/app_pid.txt)
+            kill $APP_PID 2>/dev/null || true
+            echo "✅ App Node.js parada (PID: $APP_PID)"
+          fi
+          docker rm -f srg-mysql 2>/dev/null || true
+          echo "✅ MySQL parado"
 
       # ── Sumário ──────────────────────────────────────────────────────────
       - name: Pipeline APROVADA pelo SRG
