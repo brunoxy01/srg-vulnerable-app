@@ -22,11 +22,11 @@ critical or high-severity vulnerabilities at runtime.
 └─────────────────────────┼──────────────────────────────────────────────-┘
                           ▼
             ┌─────────────────────────┐
-            │  Server / Docker Host   │
-            │  (OneAgent installed)   │
+            │  GitHub Actions Runner  │
+            │  (ubuntu-latest + OA)   │
             │  ┌─────────────────┐   │
-            │  │ vulnerable-app  │   │  ◄── OneAgent scans Node.js process
-            │  │  (Node.js)      │   │       and detects CVEs at runtime
+            │  │ vulnerable-app  │   │  ◄── OneAgent monitors process
+            │  │  (Node.js)      │   │       and sends data to Dynatrace
             │  └─────────────────┘   │
             │  ┌─────────────────┐   │
             │  │     MySQL       │   │
@@ -39,12 +39,11 @@ critical or high-severity vulnerabilities at runtime.
             │   fov31014.apps.dynatrace.com   │
             │                                 │
             │  Application Security           │
-            │    → detects CVE-2017-5941      │
-            │    → detects CVE-2022-29078     │
-            │    → detects CVE-2020-8203 …    │
+            │    → evaluates security         │
+            │      problems via Davis Score   │
             │                                 │
             │  Site Reliability Guardian      │
-            │    Objective: 0 critical vulns  │
+            │    Objective: 0 HIGH vulns      │
             │    Result:    ❌ FAIL → block!  │
             └─────────────────────────────────┘
 ```
@@ -53,22 +52,29 @@ critical or high-severity vulnerabilities at runtime.
 
 ## Vulnerabilities Included
 
+The app includes **code-level vulnerabilities** and **vulnerable npm packages**:
+
 | # | Vulnerability | Package | CVE | CVSS |
 |---|--------------|---------|-----|------|
 | 1 | Hardcoded Credentials | (code) | — | — |
 | 2 | SQL Injection | (code) | — | CRITICAL |
 | 3 | Reflected XSS | (code) | — | HIGH |
 | 4 | Command Injection | (code) | — | CRITICAL |
-| 5 | Insecure Deserialization / **RCE** | `node-serialize@0.0.4` | **CVE-2017-5941** | **9.8** |
-| 6 | SSRF | `axios@0.21.1` | **CVE-2021-3749** | 7.5 |
+| 5 | Insecure Deserialization / **RCE** | `node-serialize@0.0.4` | CVE-2017-5941 | 9.8 |
+| 6 | SSRF | `axios@0.21.1` | CVE-2021-3749 | 7.5 |
 | 7 | Path Traversal | (code) | — | HIGH |
-| 8 | Prototype Pollution | `lodash@4.17.15` | **CVE-2020-8203** | 7.4 |
-| 9 | JWT Algorithm Confusion | `jsonwebtoken@8.5.1` | **CVE-2022-23529** | 6.4 |
-| 10 | Template Injection / **RCE** | `ejs@3.1.6` | **CVE-2022-29078** | **9.8** |
+| 8 | Prototype Pollution | `lodash@4.17.15` | CVE-2020-8203 | 7.4 |
+| 9 | JWT Algorithm Confusion | `jsonwebtoken@8.5.1` | CVE-2022-23529 | 6.4 |
+| 10 | Template Injection / **RCE** | `ejs@3.1.6` | CVE-2022-29078 | 9.8 |
 
-Dynatrace Application Security detects **CVEs 5, 6, 8, 9, 10** (the library-based ones)
-at runtime the moment the Node.js process starts. The SRG Guardian objective
-"No Critical Vulnerabilities" immediately fails on `node-serialize` and `ejs`.
+### How the SRG Security Gate works
+
+The Site Reliability Guardian evaluates **security problems** detected by Dynatrace
+Application Security in the environment. Dynatrace assigns a **Davis Security Score**
+(not raw CVSS) that considers reachability, exploit availability, and asset exposure.
+
+The Guardian objectives query the Dynatrace Security Problems API via DQL and block
+the pipeline when thresholds are exceeded (e.g. any HIGH-severity problem = FAIL).
 
 ---
 
@@ -120,7 +126,7 @@ It automatically discovers Docker containers and scans Node.js processes for CVE
    ```
 4. In the Dynatrace UI, go to **Infrastructure → Hosts** and confirm your host appears.
 5. After starting `docker compose up`, go to **Application Security → Vulnerabilities** —
-   within 2–5 minutes the CVEs from `node-serialize`, `ejs`, `lodash`, and `axios`
+   within 2–5 minutes the security problems from the environment
    will appear automatically.
 
 ---
@@ -193,10 +199,10 @@ Verify in the UI:
 
 ### What the Guardian checks
 
-| Objective | DQL | Pass condition |
+| Objective | DQL | Fail condition |
 |-----------|-----|----------------|
-| No Critical Vulnerabilities | `fetch security_problems \| filter status == "OPEN" and riskLevel == "CRITICAL" \| count` | count ≤ 0 |
-| High Vulnerabilities < 3 | `fetch security_problems \| filter status == "OPEN" and riskLevel == "HIGH" \| count` | count ≤ 2 (warn at 1) |
+| Sem vulnerabilidades CRITICAL | `fetch security_problems \| filter status == "OPEN" and riskLevel == "CRITICAL" \| count` | count > 0 |
+| Vulnerabilidades HIGH | `fetch security_problems \| filter status == "OPEN" and riskLevel == "HIGH" \| count` | count > 1 |
 
 ---
 
@@ -354,6 +360,4 @@ srg-vulnerable-app/
 - [Dynatrace Site Reliability Guardian](https://docs.dynatrace.com/docs/deliver/site-reliability-guardian)
 - [Dynatrace Application Security](https://docs.dynatrace.com/docs/protect/application-security)
 - [Dynatrace Automation Workflows](https://docs.dynatrace.com/docs/deliver/dynatrace-workflows)
-- [CVE-2017-5941 — node-serialize RCE](https://nvd.nist.gov/vuln/detail/CVE-2017-5941)
-- [CVE-2022-29078 — ejs Template Injection](https://nvd.nist.gov/vuln/detail/CVE-2022-29078)
-- [CVE-2020-8203 — lodash Prototype Pollution](https://nvd.nist.gov/vuln/detail/CVE-2020-8203)
+- [Davis Security Score](https://docs.dynatrace.com/docs/protect/application-security/vulnerability-analytics/davis-security-score)
