@@ -136,9 +136,15 @@ while [ $ELAPSED_TIME -lt $MAX_WAIT_TIME ]; do
         # Extract validation_status — API returns "validation_status": "pass" (with space)
         VALIDATION_STATUS=$(echo "$TASKS_RESPONSE" | grep -o '"validation_status"[[:space:]]*:[[:space:]]*"[^"]*"' 2>/dev/null | head -1 | grep -o '"[^"]*"$' | tr -d '"')
         VALIDATION_ID=$(echo "$TASKS_RESPONSE" | grep -o '"validation_id"[[:space:]]*:[[:space:]]*"[^"]*"' 2>/dev/null | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+        VALIDATION_URL=$(echo "$TASKS_RESPONSE" | grep -o '"validation_url"[[:space:]]*:[[:space:]]*"[^"]*"' 2>/dev/null | head -1 | sed 's/.*"validation_url"[[:space:]]*:[[:space:]]*"//' | sed 's/"$//')
         PASS_COUNT=$(echo "$TASKS_RESPONSE" | grep -o '"pass"[[:space:]]*:[[:space:]]*[0-9]*' 2>/dev/null | head -1 | grep -o '[0-9]*$')
         FAIL_COUNT=$(echo "$TASKS_RESPONSE" | grep -o '"fail"[[:space:]]*:[[:space:]]*[0-9]*' 2>/dev/null | head -1 | grep -o '[0-9]*$')
         WARNING_COUNT=$(echo "$TASKS_RESPONSE" | grep -o '"warning"[[:space:]]*:[[:space:]]*[0-9]*' 2>/dev/null | head -1 | grep -o '[0-9]*$')
+
+        # Save validation URL for pipeline summary steps
+        if [ -n "$VALIDATION_URL" ]; then
+            echo "$VALIDATION_URL" > /tmp/dynatrace_validation_url.txt
+        fi
         
         # Check Guardian validation result
         if [ "$VALIDATION_STATUS" = "pass" ]; then
@@ -153,6 +159,9 @@ while [ $ELAPSED_TIME -lt $MAX_WAIT_TIME ]; do
             echo ""
             echo -e "${BLUE}📊 View Guardian Dashboard:${NC}"
             echo "   ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian"
+            if [ -n "$VALIDATION_URL" ]; then
+                echo -e "${BLUE}🔗 Validation: ${VALIDATION_URL}${NC}"
+            fi
             echo ""
             echo -e "${BLUE}📋 Validation ID: ${VALIDATION_ID}${NC}"
             echo -e "${BLUE}📋 Execution ID: ${EXECUTION_ID}${NC}"
@@ -170,30 +179,36 @@ while [ $ELAPSED_TIME -lt $MAX_WAIT_TIME ]; do
             echo ""
             echo -e "${YELLOW}📊 View Guardian Dashboard for details:${NC}"
             echo "   ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian"
+            if [ -n "$VALIDATION_URL" ]; then
+                echo -e "${YELLOW}🔗 Validation: ${VALIDATION_URL}${NC}"
+            fi
             echo ""
             echo -e "${YELLOW}📋 Validation ID: ${VALIDATION_ID}${NC}"
             echo -e "${YELLOW}📋 Execution ID: ${EXECUTION_ID}${NC}"
             echo ""
-            echo -e "${YELLOW}🔍 Check: Errors, Latency, Saturation, or User Type validation${NC}"
+            echo -e "${YELLOW}🔍 Vulnerabilities detected — fix packages and re-deploy${NC}"
             exit 1
         elif [ "$VALIDATION_STATUS" = "warning" ]; then
             echo ""
             echo -e "${YELLOW}╔════════════════════════════════════════════════════════╗${NC}"
-            echo -e "${YELLOW}║                  ⚠️  VALIDATION WARNING                ║${NC}"
+            echo -e "${YELLOW}║              ⚠️  VALIDATION WARNING — BLOCKED          ║${NC}"
             echo -e "${YELLOW}╚════════════════════════════════════════════════════════╝${NC}"
             echo ""
-            echo -e "${YELLOW}⚠️  Validation passed but with warnings${NC}"
+            echo -e "${YELLOW}⚠️  Guardian detected warnings — pipeline BLOCKED${NC}"
             echo -e "${YELLOW}   Guardian validation status: '$VALIDATION_STATUS'${NC}"
-            echo -e "${YELLOW}   Objectives: ${PASS_COUNT} passed, ${WARNING_COUNT} warnings${NC}"
+            echo -e "${YELLOW}   Objectives: ${PASS_COUNT} passed, ${WARNING_COUNT} warnings, ${FAIL_COUNT} failed${NC}"
             echo ""
             echo -e "${BLUE}📊 View Guardian Dashboard for details:${NC}"
             echo "   ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian"
+            if [ -n "$VALIDATION_URL" ]; then
+                echo -e "${BLUE}🔗 Validation: ${VALIDATION_URL}${NC}"
+            fi
             echo ""
             echo -e "${BLUE}📋 Validation ID: ${VALIDATION_ID}${NC}"
             echo -e "${BLUE}📋 Execution ID: ${EXECUTION_ID}${NC}"
             echo ""
-            # Warnings don't fail the pipeline
-            exit 0
+            # Warnings BLOCK the pipeline in a security gate
+            exit 1
         fi
     fi
 done

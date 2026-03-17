@@ -181,19 +181,39 @@ jobs:
           echo "❌ Aplicação não ficou saudável a tempo"
           exit 1
 
+      # ── ②b Aquecer endpoints para forçar carregamento dos módulos ────────
+      - name: Aquecer endpoints vulneráveis
+        run: |
+          echo "🔥 Chamando endpoints para forçar carregamento dos módulos..."
+          curl -sf http://localhost:3000/ > /dev/null 2>&1 || true
+          curl -sf http://localhost:3000/login > /dev/null 2>&1 || true
+          curl -sf http://localhost:3000/search?q=test > /dev/null 2>&1 || true
+          curl -sf http://localhost:3000/ping?host=localhost > /dev/null 2>&1 || true
+          curl -sf http://localhost:3000/api/fetch?url=http://localhost:3000/health > /dev/null 2>&1 || true
+          curl -sf http://localhost:3000/api/file?name=test > /dev/null 2>&1 || true
+          curl -sf -X POST http://localhost:3000/api/merge -H 'Content-Type: application/json' -d '{"key": "value"}' > /dev/null 2>&1 || true
+          curl -sf -X POST http://localhost:3000/api/profile -H 'Content-Type: application/json' -d '{"profile": "{\\"name\\":\\"test\\"}"}' > /dev/null 2>&1 || true
+          echo "✅ Todos endpoints chamados"
+
       # ── ③ Aguardar OneAgent + AppSec detectarem os CVEs ──────────────────
-      # Se o OneAgent instalou com sucesso, aguarda o processo Node.js ser
-      # instrumentado e os CVEs registrados na tenant (~2 min).
-      # Se o OneAgent não instalou, a validação SRG avalia as vulnerabilidades
-      # já conhecidas na tenant (de execuções anteriores com OneAgent).
+      # OneAgent precisa de tempo para instrumentar o processo Node.js,
+      # detectar os pacotes vulneráveis em runtime e enviar à tenant.
       - name: Aguardar AppSec detectar vulnerabilidades
         run: |
           echo "⏳ Aguardando Application Security registrar vulnerabilidades..."
-          echo "   Pacotes: node-serialize (CVE-2017-5941), ejs (CVE-2022-29078),"
-          echo "            lodash (CVE-2020-8203), axios (CVE-2021-3749)"
+          echo "   Pacotes vulneráveis carregados em runtime:"
+          echo "     node-serialize@0.0.4 (CVE-2017-5941), ejs@3.1.6 (CVE-2022-29078)"
+          echo "     lodash@4.17.15 (CVE-2020-8203), axios@0.21.1 (CVE-2021-3749)"
+          echo "     jsonwebtoken@8.5.1 (CVE-2022-23529)"
           echo ""
-          echo "   Janela de espera: 2 minutos"
-          sleep 120
+          echo "   Janela de espera: 5 minutos"
+          sleep 300
+          echo ""
+          echo "🔥 Segundo aquecimento dos endpoints..."
+          curl -sf http://localhost:3000/ > /dev/null 2>&1 || true
+          curl -sf http://localhost:3000/login > /dev/null 2>&1 || true
+          curl -sf http://localhost:3000/search?q=warmup > /dev/null 2>&1 || true
+          curl -sf -X POST http://localhost:3000/api/merge -H 'Content-Type: application/json' -d '{"a": 1}' > /dev/null 2>&1 || true
           echo "✅ Janela de análise concluída"
 
       # ── ④ Enviar evento de deployment ao Dynatrace ────────────────────────
@@ -265,17 +285,29 @@ jobs:
       # ── Sumário ──────────────────────────────────────────────────────────
       - name: Pipeline APROVADA pelo SRG
         if: success()
+        env:
+          DT_TENANT_URL: https://fov31014.apps.dynatrace.com
         run: |
           echo ""
           echo "✅ DEPLOY APROVADO — nenhuma vulnerabilidade bloqueante encontrada"
           echo "📊 Dashboard: ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian"
+          if [ -f /tmp/dynatrace_validation_url.txt ]; then
+            echo "🔗 Validação: $(cat /tmp/dynatrace_validation_url.txt)"
+          fi
 
       - name: Pipeline BLOQUEADA pelo SRG
         if: failure()
+        env:
+          DT_TENANT_URL: https://fov31014.apps.dynatrace.com
         run: |
           echo ""
           echo "❌ DEPLOY BLOQUEADO PELO SRG"
-          echo "⚠️  Dynatrace Application Security detectou vulnerabilidades críticas!"
+          echo "⚠️  Dynatrace Site Reliability Guardian detectou vulnerabilidades!"
+          echo ""
+          echo "📊 Dashboard: ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian"
+          if [ -f /tmp/dynatrace_validation_url.txt ]; then
+            echo "🔗 Validação: $(cat /tmp/dynatrace_validation_url.txt)"
+          fi
           echo ""
           echo "🔍 Revisar: ${DT_TENANT_URL}/ui/apps/dynatrace.classic.security.overview"
           echo "🛠  Correção: atualize os pacotes em app/package.json e faça novo push"
