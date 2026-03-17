@@ -5,9 +5,8 @@
 ## O que é este projeto?
 
 Uma aplicação **Node.js propositalmente vulnerável** que demonstra como o
-[Dynatrace Site Reliability Guardian (SRG)](https://docs.dynatrace.com/docs/deliver/site-reliability-guardian)
-pode atuar como **security gate no CI/CD**, **bloqueando deployments automaticamente**
-quando o [Dynatrace Application Security](https://docs.dynatrace.com/docs/protect/application-security)
+**Dynatrace Site Reliability Guardian (SRG)** pode atuar como **security gate no CI/CD**,
+**bloqueando deployments automaticamente** quando o **Dynatrace Application Security**
 detecta vulnerabilidades de alta severidade em runtime.
 
 ### Conceito
@@ -61,7 +60,7 @@ A aplicação inclui **vulnerabilidades no código** e **pacotes npm com CVEs co
 | `ejs` | 3.1.6 | CVE-2022-29078 | **CRITICAL** (9.8) | Template Injection → RCE |
 | `lodash` | 4.17.15 | CVE-2020-8203 | **HIGH** (7.4) | Prototype Pollution |
 | `axios` | 0.21.1 | CVE-2021-3749 | **HIGH** (7.5) | ReDoS / SSRF |
-| `jsonwebtoken` | 8.5.1 | CVE-2022-23529 | **MEDIUM** (6.4) | Algorithm confusion |
+| `jsonwebtoken` | 8.5.1 | — | **MEDIUM** | Versão desatualizada com falhas conhecidas |
 
 ### Vulnerabilidades no código-fonte
 
@@ -262,24 +261,22 @@ build ✅  →  security-gate ✅  PASSED
 | [MySQL 8](https://www.mysql.com/) | Banco de dados (SQL injection demo) |
 | [Docker](https://www.docker.com/) | Containerização e build |
 | [GitHub Actions](https://github.com/features/actions) | CI/CD pipeline |
-| [Dynatrace OneAgent](https://docs.dynatrace.com/docs/setup-and-configuration/dynatrace-oneagent) | Instrumentação e monitoramento em runtime |
-| [Dynatrace Application Security](https://docs.dynatrace.com/docs/protect/application-security) | Detecção de vulnerabilidades em runtime |
-| [Dynatrace Site Reliability Guardian](https://docs.dynatrace.com/docs/deliver/site-reliability-guardian) | Security gate — avaliação automatizada |
-| [Dynatrace Automation Workflows](https://docs.dynatrace.com/docs/deliver/dynatrace-workflows) | Orquestração da validação SRG |
+| Dynatrace OneAgent | Instrumentação e monitoramento em runtime |
+| Dynatrace Application Security | Detecção de vulnerabilidades em runtime |
+| Dynatrace Site Reliability Guardian | Security gate — avaliação automatizada |
+| Dynatrace Automation Workflows | Orquestração da validação SRG |
 
 ---
 
 ## Referências e links úteis
 
 ### Documentação Dynatrace
-- [Site Reliability Guardian — Overview](https://docs.dynatrace.com/docs/deliver/site-reliability-guardian)
-- [Site Reliability Guardian — Create a guardian](https://docs.dynatrace.com/docs/deliver/site-reliability-guardian/how-to/create-guardian)
-- [Application Security — Overview](https://docs.dynatrace.com/docs/protect/application-security)
-- [Application Security — Vulnerability Analytics](https://docs.dynatrace.com/docs/protect/application-security/vulnerability-analytics)
-- [Davis Security Score](https://docs.dynatrace.com/docs/protect/application-security/vulnerability-analytics/davis-security-score)
-- [Automation Workflows](https://docs.dynatrace.com/docs/deliver/dynatrace-workflows)
-- [OneAgent — Setup](https://docs.dynatrace.com/docs/setup-and-configuration/dynatrace-oneagent)
+- [Dynatrace Docs](https://docs.dynatrace.com/) — Portal principal da documentação
 - [OAuth2 Client Credentials](https://docs.dynatrace.com/docs/manage/identity-access-management/access-tokens-and-oauth-clients/oauth-clients)
+
+> Para acessar a documentação de **Site Reliability Guardian**, **Application Security**,
+> **Automation Workflows** e **OneAgent**, navegue pelo menu lateral em [docs.dynatrace.com](https://docs.dynatrace.com)
+> (requer login SSO Dynatrace).
 
 ### Repositório
 - **GitHub**: https://github.com/brunoxy01/srg-vulnerable-app
@@ -290,7 +287,6 @@ build ✅  →  security-gate ✅  PASSED
 - [CVE-2022-29078](https://nvd.nist.gov/vuln/detail/CVE-2022-29078) — ejs Template Injection
 - [CVE-2020-8203](https://nvd.nist.gov/vuln/detail/CVE-2020-8203) — lodash Prototype Pollution
 - [CVE-2021-3749](https://nvd.nist.gov/vuln/detail/CVE-2021-3749) — axios ReDoS
-- [CVE-2022-23529](https://nvd.nist.gov/vuln/detail/CVE-2022-23529) — jsonwebtoken Algorithm Confusion
 
 ---
 

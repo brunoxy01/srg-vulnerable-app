@@ -30,6 +30,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '0 */5 * * *'   # executa a cada 5 horas
   workflow_dispatch:
 
 env:
