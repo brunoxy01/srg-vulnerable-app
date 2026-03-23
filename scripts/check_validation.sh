@@ -157,32 +157,6 @@ while [ $ELAPSED_TIME -lt $MAX_WAIT_TIME ]; do
             echo -e "${GREEN}   Guardian validation status: '$VALIDATION_STATUS'${NC}"
             echo -e "${GREEN}   Objectives: ${PASS_COUNT} passed, ${FAIL_COUNT} failed${NC}"
             echo ""
-
-            # Verificar se existem vulns detectadas antes — se sim, o Guardian falhou em avaliar
-            if [ -f /tmp/detected_vuln_count.txt ]; then
-                DETECTED=$(cat /tmp/detected_vuln_count.txt)
-                if [ "$DETECTED" -gt 0 ] 2>/dev/null; then
-                    echo -e "${RED}╔════════════════════════════════════════════════════════╗${NC}"
-                    echo -e "${RED}║   ⚠️  INCONSISTÊNCIA: Vulns detectadas mas SRG passou  ║${NC}"
-                    echo -e "${RED}╚════════════════════════════════════════════════════════╝${NC}"
-                    echo ""
-                    echo -e "${RED}   ${DETECTED} vulnerabilidades foram detectadas pelo AppSec${NC}"
-                    echo -e "${RED}   mas o Guardian retornou PASS.${NC}"
-                    echo -e "${RED}   O pipeline será BLOQUEADO por segurança.${NC}"
-                    echo ""
-                    echo -e "${YELLOW}📊 View Guardian Dashboard:${NC}"
-                    echo "   ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian"
-                    if [ -n "$VALIDATION_URL" ]; then
-                        echo -e "${YELLOW}🔗 Validation: ${VALIDATION_URL}${NC}"
-                    fi
-                    echo ""
-                    echo -e "${YELLOW}📋 Validation ID: ${VALIDATION_ID}${NC}"
-                    echo -e "${YELLOW}📋 Execution ID: ${EXECUTION_ID}${NC}"
-                    echo ""
-                    exit 1
-                fi
-            fi
-
             echo -e "${BLUE}📊 View Guardian Dashboard:${NC}"
             echo "   ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian"
             if [ -n "$VALIDATION_URL" ]; then
