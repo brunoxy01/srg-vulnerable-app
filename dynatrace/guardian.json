@@ -11,11 +11,11 @@
       "comparisonOperator": "LESS_THAN_OR_EQUAL"
     },
     {
-      "name": "Vulnerabilidades HIGH menores que 3",
+      "name": "Vulnerabilidades HIGH detectadas",
       "objectiveType": "DQL",
       "dqlQuery": "fetch security.events | dedup {vulnerability.display_id, affected_entity.id} | filter vulnerability.resolution.status == \"OPEN\" AND vulnerability.parent.mute.status != \"MUTED\" AND vulnerability.mute.status != \"MUTED\" AND vulnerability.risk.level == \"HIGH\" | summarize highCount = countDistinct(vulnerability.display_id)",
-      "target": 2,
-      "warning": 1,
+      "target": 0,
+      "warning": 0,
       "comparisonOperator": "LESS_THAN_OR_EQUAL"
     }
   ]

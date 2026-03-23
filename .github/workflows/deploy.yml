@@ -237,26 +237,129 @@ jobs:
           curl -sf -X POST http://localhost:3000/api/profile -H 'Content-Type: application/json' -d '{"profile": "{\\"name\\":\\"test\\"}"}' > /dev/null 2>&1 || true
           echo "✅ Todos endpoints chamados"
 
-      # ── ③ Aguardar OneAgent + AppSec detectarem os CVEs ──────────────────
+      # ── ③ Aguardar AppSec detectar vulnerabilidades e listar nos logs ────
       # OneAgent precisa de tempo para instrumentar o processo Node.js,
       # detectar os pacotes vulneráveis em runtime e enviar à tenant.
-      - name: Aguardar AppSec detectar vulnerabilidades
+      # Este step consulta a API via DQL para confirmar detecção e listar CVEs.
+      - name: Aguardar e verificar vulnerabilidades detectadas
+        env:
+          DT_CLIENT_ID:     ${{ secrets.DT_CLIENT_ID }}
+          DT_CLIENT_SECRET: ${{ secrets.DT_CLIENT_SECRET }}
+          DT_TENANT_URL:    https://fov31014.apps.dynatrace.com
         run: |
-          echo "⏳ Aguardando Application Security registrar vulnerabilidades..."
+          echo "⏳ Aguardando Application Security detectar vulnerabilidades..."
           echo "   Pacotes vulneráveis carregados em runtime:"
           echo "     node-serialize@0.0.4 (CVE-2017-5941), ejs@3.1.6 (CVE-2022-29078)"
           echo "     lodash@4.17.15 (CVE-2020-8203), axios@0.21.1 (CVE-2021-3749)"
-          echo "     jsonwebtoken@8.5.1 (CVE-2022-23529)"
           echo ""
-          echo "   Janela de espera: 5 minutos"
-          sleep 300
+
+          # Função para obter token OAuth
+          get_token() {
+            curl -s -X POST "https://sso.dynatrace.com/sso/oauth2/token" \
+              -H "Content-Type: application/x-www-form-urlencoded" \
+              -d "grant_type=client_credentials&client_id=${DT_CLIENT_ID}&client_secret=${DT_CLIENT_SECRET}&scope=storage:events:read storage:buckets:read" \
+              | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4
+          }
+
+          # Função para consultar vulnerabilidades via DQL
+          query_vulns() {
+            local token="$1"
+            curl -s -X POST "${DT_TENANT_URL}/platform/storage/query/v1/query:execute" \
+              -H "Authorization: Bearer $token" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "query": "fetch security.events | dedup {vulnerability.display_id} | filter vulnerability.resolution.status == \"OPEN\" AND vulnerability.parent.mute.status != \"MUTED\" AND vulnerability.mute.status != \"MUTED\" AND vulnerability.risk.level in (\"CRITICAL\", \"HIGH\") | fields vulnerability.display_id, vulnerability.title, vulnerability.risk.level, vulnerability.risk.score | sort vulnerability.risk.score desc | limit 20",
+                "defaultTimeframeStart": "now()-2h",
+                "defaultTimeframeEnd": "now()"
+              }' 2>/dev/null
+          }
+
+          # Espera inicial de 3 minutos para o OneAgent instrumentar
+          echo "   Janela de espera inicial: 3 minutos"
+          sleep 180
+
           echo ""
           echo "🔥 Segundo aquecimento dos endpoints..."
           curl -sf http://localhost:3000/ > /dev/null 2>&1 || true
           curl -sf http://localhost:3000/login > /dev/null 2>&1 || true
           curl -sf http://localhost:3000/search?q=warmup > /dev/null 2>&1 || true
           curl -sf -X POST http://localhost:3000/api/merge -H 'Content-Type: application/json' -d '{"a": 1}' > /dev/null 2>&1 || true
-          echo "✅ Janela de análise concluída"
+          curl -sf -X POST http://localhost:3000/api/profile -H 'Content-Type: application/json' -d '{"profile": "{\\"name\\":\\"test\\"}"}' > /dev/null 2>&1 || true
+          echo "✅ Endpoints aquecidos"
+          echo ""
+
+          # Polling: consultar DQL a cada 60s por até 10 minutos
+          MAX_POLL=600
+          POLL_WAIT=60
+          ELAPSED=0
+          VULN_COUNT=0
+
+          while [ $ELAPSED -lt $MAX_POLL ]; do
+            TOKEN=$(get_token)
+            if [ -z "$TOKEN" ]; then
+              echo "   ⚠️  Não conseguiu token para consulta DQL (tentando novamente...)"
+              sleep $POLL_WAIT
+              ELAPSED=$((ELAPSED + POLL_WAIT))
+              continue
+            fi
+
+            RESULT=$(query_vulns "$TOKEN")
+            # Conta registros retornados
+            VULN_COUNT=$(echo "$RESULT" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              records = data.get('result', {}).get('records', [])
+              print(len(records))
+          except:
+              print(0)
+          " 2>/dev/null || echo "0")
+
+            echo "   🔍 Verificação (${ELAPSED}s): ${VULN_COUNT} vulnerabilidades HIGH/CRITICAL detectadas"
+
+            if [ "$VULN_COUNT" -gt 0 ] 2>/dev/null; then
+              echo ""
+              echo "╔════════════════════════════════════════════════════════╗"
+              echo "║   🛡️  VULNERABILIDADES DETECTADAS PELO DYNATRACE      ║"
+              echo "╚════════════════════════════════════════════════════════╝"
+              echo ""
+
+              # Extrair e mostrar cada vulnerabilidade
+              echo "$RESULT" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              records = data.get('result', {}).get('records', [])
+              for r in records:
+                  vid = r.get('vulnerability.display_id', 'N/A')
+                  title = r.get('vulnerability.title', 'N/A')
+                  level = r.get('vulnerability.risk.level', 'N/A')
+                  score = r.get('vulnerability.risk.score', 'N/A')
+                  print(f'  ❌ [{level}] {title}')
+                  print(f'     ID: {vid} | Davis Security Score: {score}')
+                  print()
+          except Exception as e:
+              print(f'  (detalhes indisponíveis: {e})')
+          " 2>/dev/null
+
+              echo ""
+              echo "✅ ${VULN_COUNT} vulnerabilidades confirmadas — prosseguindo para validação SRG"
+              echo "$VULN_COUNT" > /tmp/detected_vuln_count.txt
+              echo "$RESULT" > /tmp/detected_vulns.json
+              break
+            fi
+
+            sleep $POLL_WAIT
+            ELAPSED=$((ELAPSED + POLL_WAIT))
+          done
+
+          if [ "$VULN_COUNT" -eq 0 ] 2>/dev/null || [ -z "$VULN_COUNT" ]; then
+            echo ""
+            echo "⚠️  Nenhuma vulnerabilidade HIGH/CRITICAL detectada após ${MAX_POLL}s"
+            echo "   O AppSec pode precisar de mais tempo ou o OneAgent não instrumentou a app."
+            echo "   Prosseguindo para validação SRG mesmo assim..."
+            echo "0" > /tmp/detected_vuln_count.txt
+          fi
 
       # ── ④ Disparar validação SRG ─────────────────────────────────────────
       - name: Disparar validação SRG

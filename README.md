@@ -175,6 +175,8 @@ Crie um client com os scopes:
 - `srg:guardians:read`
 - `srg:guardians:write`
 - `security:findings:read`
+- `storage:events:read`
+- `storage:buckets:read`
 
 > O Client ID começa com `dt0s02.` e o Secret tem o formato `dt0s02.XXXX.XXXX`.
 
