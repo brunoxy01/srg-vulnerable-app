@@ -3,7 +3,7 @@
 # setup_dynatrace.sh
 #
 # Creates the SRG Guardian and Automation Workflow in your Dynatrace tenant.
-# Run this ONCE before the first CI/CD execution.
+# Idempotent — safe to run multiple times. Reuses existing resources if found.
 #
 # Prerequisites:
 #   - Dynatrace OAuth2 client with the following scopes:
@@ -86,73 +86,98 @@ fi
 echo -e "${GREEN}✅ Authenticated${NC}"
 echo ""
 
-# ── (Opcional) Listar guardians existentes para referência ───────────────────
-echo -e "${BLUE}📋 Guardians existentes na tenant:${NC}"
-curl -s "${DT_TENANT_URL}/platform/site-reliability-guardian/v1/guardians" \
+# ── Check / Create SRG Guardian ───────────────────────────────────────────────
+GUARDIAN_NAME=$(grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' dynatrace/guardian.json | head -1 | cut -d'"' -f4)
+echo -e "${YELLOW}🛡️  Verificando Guardian existente: ${GUARDIAN_NAME}...${NC}"
+
+GUARDIANS_LIST=$(curl -s "${DT_TENANT_URL}/platform/site-reliability-guardian/v1/guardians" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "Accept: application/json" \
-  | grep -o '"name":"[^"]*"\|"id":"[^"]*"' | head -20 || true
-echo ""
+  -H "Accept: application/json")
 
-# ── Create SRG Guardian ───────────────────────────────────────────────────────
-echo -e "${YELLOW}🛡️  Criando SRG Guardian...${NC}"
+# Procura um Guardian com o mesmo nome
+GUARDIAN_ID=$(echo "$GUARDIANS_LIST" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    for g in data.get('guardians', data if isinstance(data, list) else []):
+        if g.get('name') == '$GUARDIAN_NAME':
+            print(g['id'])
+            break
+except: pass
+" 2>/dev/null)
 
-GUARDIAN_JSON=$(cat dynatrace/guardian.json)
-
-GUARDIAN_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-  -X POST "${DT_TENANT_URL}/platform/site-reliability-guardian/v1/guardians" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "$GUARDIAN_JSON")
-
-HTTP_STATUS=$(echo "$GUARDIAN_RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
-GUARDIAN_BODY=$(echo "$GUARDIAN_RESPONSE" | grep -v "HTTP_STATUS:")
-
-if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-  GUARDIAN_ID=$(echo "$GUARDIAN_BODY" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-  echo -e "${GREEN}✅ Guardian criado — ID: ${GUARDIAN_ID}${NC}"
+if [ -n "$GUARDIAN_ID" ]; then
+  echo -e "${GREEN}✅ Guardian já existe — ID: ${GUARDIAN_ID} (reutilizando)${NC}"
 else
-  echo -e "${RED}❌  Falha ao criar Guardian (HTTP $HTTP_STATUS)${NC}"
-  echo ""
-  echo -e "${YELLOW}Resposta da API:${NC}"
-  echo "$GUARDIAN_BODY"
-  echo ""
-  echo -e "${YELLOW}Possíveis causas:${NC}"
-  echo "  • Escopo srg:guardians:write não habilitado no OAuth client"
-  echo "  • Tenant não tem Application Security / SRG habilitado"
-  echo ""
-  exit 1
+  echo -e "${YELLOW}   Não encontrado. Criando novo Guardian...${NC}"
+
+  GUARDIAN_JSON=$(cat dynatrace/guardian.json)
+
+  GUARDIAN_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+    -X POST "${DT_TENANT_URL}/platform/site-reliability-guardian/v1/guardians" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$GUARDIAN_JSON")
+
+  HTTP_STATUS=$(echo "$GUARDIAN_RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+  GUARDIAN_BODY=$(echo "$GUARDIAN_RESPONSE" | grep -v "HTTP_STATUS:")
+
+  if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+    GUARDIAN_ID=$(echo "$GUARDIAN_BODY" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    echo -e "${GREEN}✅ Guardian criado — ID: ${GUARDIAN_ID}${NC}"
+  else
+    echo -e "${RED}❌  Falha ao criar Guardian (HTTP $HTTP_STATUS)${NC}"
+    echo "$GUARDIAN_BODY"
+    exit 1
+  fi
 fi
 
-# ── Create Automation Workflow ────────────────────────────────────────────────
+# ── Check / Create Automation Workflow ────────────────────────────────────────
+WORKFLOW_TITLE=$(grep -o '"title"[[:space:]]*:[[:space:]]*"[^"]*"' dynatrace/workflow.json | head -1 | cut -d'"' -f4)
 echo ""
-echo -e "${YELLOW}⚙️  Criando Automation Workflow...${NC}"
+echo -e "${YELLOW}⚙️  Verificando Workflow existente: ${WORKFLOW_TITLE}...${NC}"
 
-# Injeta o ID do Guardian no template do workflow
-WORKFLOW_JSON=$(cat dynatrace/workflow.json | sed "s/GUARDIAN_ID_PLACEHOLDER/${GUARDIAN_ID}/g")
-
-WORKFLOW_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-  -X POST "${DT_TENANT_URL}/platform/automation/v1/workflows" \
+WORKFLOWS_LIST=$(curl -s "${DT_TENANT_URL}/platform/automation/v1/workflows" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "$WORKFLOW_JSON")
+  -H "Accept: application/json")
 
-HTTP_STATUS=$(echo "$WORKFLOW_RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
-WORKFLOW_BODY=$(echo "$WORKFLOW_RESPONSE" | grep -v "HTTP_STATUS:")
+# Procura um Workflow com o mesmo título
+WORKFLOW_ID=$(echo "$WORKFLOWS_LIST" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    for w in data.get('results', data.get('workflows', data if isinstance(data, list) else [])):
+        if w.get('title') == '$WORKFLOW_TITLE':
+            print(w['id'])
+            break
+except: pass
+" 2>/dev/null)
 
-if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-  WORKFLOW_ID=$(echo "$WORKFLOW_BODY" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-  echo -e "${GREEN}✅ Workflow criado — ID: ${WORKFLOW_ID}${NC}"
+if [ -n "$WORKFLOW_ID" ]; then
+  echo -e "${GREEN}✅ Workflow já existe — ID: ${WORKFLOW_ID} (reutilizando)${NC}"
 else
-  echo -e "${RED}❌  Falha ao criar Workflow (HTTP $HTTP_STATUS)${NC}"
-  echo ""
-  echo -e "${YELLOW}Resposta da API:${NC}"
-  echo "$WORKFLOW_BODY"
-  echo ""
-  echo -e "${YELLOW}Possíveis causas:${NC}"
-  echo "  • Escopo automation:workflows:write não habilitado no OAuth client"
-  echo ""
-  exit 1
+  echo -e "${YELLOW}   Não encontrado. Criando novo Workflow...${NC}"
+
+  # Injeta o ID do Guardian no template do workflow
+  WORKFLOW_JSON=$(cat dynatrace/workflow.json | sed "s/GUARDIAN_ID_PLACEHOLDER/${GUARDIAN_ID}/g")
+
+  WORKFLOW_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+    -X POST "${DT_TENANT_URL}/platform/automation/v1/workflows" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$WORKFLOW_JSON")
+
+  HTTP_STATUS=$(echo "$WORKFLOW_RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+  WORKFLOW_BODY=$(echo "$WORKFLOW_RESPONSE" | grep -v "HTTP_STATUS:")
+
+  if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+    WORKFLOW_ID=$(echo "$WORKFLOW_BODY" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    echo -e "${GREEN}✅ Workflow criado — ID: ${WORKFLOW_ID}${NC}"
+  else
+    echo -e "${RED}❌  Falha ao criar Workflow (HTTP $HTTP_STATUS)${NC}"
+    echo "$WORKFLOW_BODY"
+    exit 1
+  fi
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
