@@ -2,7 +2,7 @@
 
 > **⚠️ Aplicação intencionalmente vulnerável — apenas para demonstração.**
 
-App Node.js com vulnerabilidades propositais que demonstra o **Dynatrace Site Reliability Guardian (SRG)** como **security gate no CI/CD** — bloqueando deploys automaticamente quando o Application Security detecta CVEs em runtime.
+App Node.js com vulnerabilidades propositais que demonstra o **Dynatrace Site Reliability Guardian (SRG)** como **security gate no CI/CD** — bloqueando deploys quando o Application Security detecta CVEs em runtime.
 
 ---
 
@@ -10,80 +10,16 @@ App Node.js com vulnerabilidades propositais que demonstra o **Dynatrace Site Re
 
 ```mermaid
 flowchart LR
-    subgraph GH["GitHub Actions"]
-        direction TB
-        B["<b>build</b><br/>Build image<br/>Push to GHCR"]
-        SG["<b>security-gate</b><br/>① OneAgent install<br/>② MySQL + App start<br/>③ Aguarda AppSec<br/>④ Trigger SRG<br/>⑤ Poll resultado"]
-        B --> SG
-    end
+    B["build<br/><i>image → GHCR</i>"] --> SG["security-gate<br/><i>OneAgent + App + SRG</i>"]
+    SG -- "CVEs detectados<br/>em runtime" --> DT["Dynatrace<br/><i>AppSec + Guardian</i>"]
+    DT -- "PASS ✅ / FAIL ❌" --> SG
 
-    subgraph DT["Dynatrace"]
-        direction TB
-        OA["OneAgent<br/><i>Instrumenta Node.js</i>"]
-        AS["Application Security<br/><i>Detecta CVEs em runtime</i>"]
-        WF["Automation Workflow<br/><i>Orquestra validação</i>"]
-        GRD["SRG Guardian<br/><i>Avalia via DQL</i>"]
-        OA --> AS
-        AS --> WF
-        WF --> GRD
-    end
-
-    SG -- "instala OneAgent +<br/>sobe app no host" --> OA
-    SG -- "dispara workflow<br/>via OAuth2 API" --> WF
-    GRD -- "PASS ✅ / FAIL ❌" --> SG
-
-    style GH fill:#24292e,color:#fff
-    style DT fill:#6f2da8,color:#fff
     style B fill:#2ea44f,color:#fff
     style SG fill:#d73a49,color:#fff
-    style OA fill:#7c3aed,color:#fff
-    style AS fill:#7c3aed,color:#fff
-    style WF fill:#7c3aed,color:#fff
-    style GRD fill:#7c3aed,color:#fff
+    style DT fill:#6f2da8,color:#fff
 ```
 
-**Pontos-chave:**
-- **100 % cloud** — roda em `ubuntu-latest`, sem servidor fixo
-- **Node.js no host** (não em container) para o OneAgent instrumentar o processo e detectar CVEs via Runtime Vulnerability Detection
-- **VM efêmera** — descartada quando o pipeline termina
-
----
-
-## Exemplo de vulnerabilidade: SQL Injection
-
-A principal vulnerabilidade de código deste projeto é o **SQL Injection** no endpoint `/login`. O input do usuário é concatenado diretamente na query SQL, sem qualquer sanitização:
-
-```js
-// ❌ VULNERÁVEL — server.js, endpoint POST /login
-const query = `SELECT * FROM users WHERE username='${username}' AND password='${password}'`;
-db.query(query, (err, results) => { /* ... */ });
-```
-
-Um atacante pode enviar como username:
-
-```
-' OR '1'='1' --
-```
-
-Isso transforma a query em:
-
-```sql
-SELECT * FROM users WHERE username='' OR '1'='1' --' AND password='qualquer'
-```
-
-A condição `'1'='1'` é sempre verdadeira e o `--` comenta o resto — o atacante faz login como o primeiro usuário do banco (admin) **sem saber a senha**.
-
-### Como seria o código seguro
-
-```js
-// ✅ SEGURO — usando prepared statements (parameterized queries)
-const query = 'SELECT * FROM users WHERE username = ? AND password = ?';
-db.query(query, [username, password], (err, results) => { /* ... */ });
-```
-
-Com prepared statements, o banco trata o input como **dado**, nunca como **código SQL**.
-
-> O Dynatrace Application Security detecta os **pacotes npm vulneráveis** (não o código-fonte em si) em runtime via OneAgent. O SRG Guardian então bloqueia o pipeline automaticamente.
+Pipeline roda 100% em `ubuntu-latest` (VM efêmera). O OneAgent instrumenta o Node.js no host, detecta os CVEs dos pacotes npm e o Guardian decide se o deploy passa ou não.
 
 ---
 
@@ -101,47 +37,15 @@ Com prepared statements, o banco trata o input como **dado**, nunca como **códi
 
 ### Vulnerabilidades no código
 
-| Tipo | Endpoint | PoC |
-|------|----------|-----|
-| SQL Injection | `POST /login` | `username: ' OR '1'='1' --` |
-| Reflected XSS | `GET /search?q=` | `q=<script>alert(1)</script>` |
-| Command Injection | `GET /ping?host=` | `host=localhost; cat /etc/passwd` |
-| SSRF | `GET /api/fetch?url=` | `url=http://169.254.169.254/` |
-| Path Traversal | `GET /api/file?name=` | `name=../../etc/passwd` |
-| Prototype Pollution | `POST /api/merge` | `{"__proto__": {"polluted": true}}` |
-| Insecure Deserialization | `POST /api/profile` | payload com `_$$ND_FUNC$$_` |
-
----
-
-## Como o SRG Security Gate funciona
-
-```mermaid
-sequenceDiagram
-    participant P as Pipeline (GitHub Actions)
-    participant O as OneAgent
-    participant A as Application Security
-    participant W as Automation Workflow
-    participant G as SRG Guardian
-
-    P->>O: Instala OneAgent + inicia app
-    O->>A: Reporta pacotes npm carregados em runtime
-    A-->>A: Detecta CVEs (node-serialize, ejs, lodash...)
-    P->>W: Dispara workflow via OAuth2 API
-    W->>G: Executa validação
-    G->>G: Query DQL: conta vulns CRITICAL/HIGH abertas
-    alt Vulnerabilidades acima do limite
-        G-->>P: ❌ FAIL → exit 1 (pipeline bloqueada)
-    else Dentro do limite
-        G-->>P: ✅ PASS → exit 0 (deploy aprovado)
-    end
-```
-
-### Objetivos do Guardian
-
-| Objetivo | Condição de falha |
-|----------|-------------------|
-| Sem vulnerabilidades CRITICAL | `count > 0` |
-| Vulnerabilidades HIGH < 3 | `count > 2` |
+| Tipo | Endpoint |
+|------|----------|
+| SQL Injection | `POST /login` |
+| Reflected XSS | `GET /search?q=` |
+| Command Injection | `GET /ping?host=` |
+| SSRF | `GET /api/fetch?url=` |
+| Path Traversal | `GET /api/file?name=` |
+| Prototype Pollution | `POST /api/merge` |
+| Insecure Deserialization | `POST /api/profile` |
 
 ---
 
@@ -237,14 +141,3 @@ git commit -am "fix: upgrade vulnerable dependencies"
 git push origin main
 # Actions: build ✅ → security-gate ✅ PASSED
 ```
-
----
-
-## Troubleshooting
-
-| Sintoma | Solução |
-|---------|---------|
-| `Authentication failed` | Verifique `DT_CLIENT_ID` / `DT_CLIENT_SECRET` e os scopes do OAuth client |
-| Vulnerabilidades não aparecem | OneAgent precisa de ~5 min. Verifique se a app está rodando e endpoints foram acessados |
-| Guardian sempre passa | Ative Application Security em Settings → Vulnerability Analytics |
-| `invalid_scope` | Recrie o OAuth client com todos os scopes necessários |
