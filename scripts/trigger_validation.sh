@@ -86,7 +86,11 @@ PAYLOAD=$(cat <<EOF
     "service":        "${SERVICE_NAME}",
     "build_version":  "${BUILD_VERSION}",
     "git_commit":     "${GIT_COMMIT}",
-    "triggered_by":   "github_actions"
+    "triggered_by":   "github_actions",
+    "timeframe": {
+      "from": "now()-1h",
+      "to": "now()"
+    }
   }
 }
 EOF
