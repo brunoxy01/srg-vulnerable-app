@@ -319,14 +319,11 @@ jobs:
           echo "❌ DEPLOY BLOQUEADO PELO SRG"
           echo "⚠️  Dynatrace Site Reliability Guardian detectou vulnerabilidades!"
           echo ""
-          echo "📊 Guardian: ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian"
+          echo "📊 Dashboard: ${DT_TENANT_URL}/ui/apps/dynatrace.site.reliability.guardian"
           if [ -f /tmp/dynatrace_validation_url.txt ]; then
             echo "🔗 Validação: $(cat /tmp/dynatrace_validation_url.txt)"
           fi
-          if [ -f /tmp/dynatrace_execution_id.txt ]; then
-            echo "📋 Execution ID: $(cat /tmp/dynatrace_execution_id.txt)"
-          fi
           echo ""
-          echo "🔍 Vulnerabilidades: ${DT_TENANT_URL}/ui/apps/dynatrace.security.vulnerabilities"
+          echo "🔍 Revisar: ${DT_TENANT_URL}/ui/apps/dynatrace.security.vulnerabilities"
           echo "🛠  Correção: atualize os pacotes em app/package.json e faça novo push"
 
