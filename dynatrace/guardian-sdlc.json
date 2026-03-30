@@ -1,0 +1,14 @@
+{
+  "name": "(SDLC) Security Gate — srg-vulnerable-app",
+  "description": "Lifecycle Guardian (SDLC Events). Disparado pelo GitHub Actions. Bloqueia a pipeline se houver vulnerabilidades HIGH abertas no srg-vulnerable-app.",
+  "objectives": [
+    {
+      "name": "Vulnerabilidades HIGH detectadas",
+      "objectiveType": "DQL",
+      "dqlQuery": "fetch security.events, from: now()-30d, to: now() | filter event.provider==\"Dynatrace\" AND event.type==\"VULNERABILITY_STATE_REPORT_EVENT\" AND event.level==\"ENTITY\" | dedup {vulnerability.display_id, affected_entity.id}, sort:{timestamp desc} | filter vulnerability.resolution.status == \"OPEN\" AND vulnerability.parent.mute.status != \"MUTED\" AND vulnerability.mute.status != \"MUTED\" AND contains(affected_entity.name, \"srg-vulnerable-app\") AND vulnerability.risk.level == \"HIGH\" | summarize highCount = countDistinct(vulnerability.display_id)",
+      "target": 1,
+      "warning": 1,
+      "comparisonOperator": "LESS_THAN_OR_EQUAL"
+    }
+  ]
+}

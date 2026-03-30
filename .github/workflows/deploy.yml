@@ -27,11 +27,11 @@ name: Build, Deploy & SRG Security Gate
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/sdlc-security-guardian]
   pull_request:
     branches: [main]
   schedule:
-    - cron: '0 */5 * * *'   # executa a cada 5 horas
+    - cron: '0 */3 * * *'   # executa a cada 3 horas
   workflow_dispatch:
 
 env:
