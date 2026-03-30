@@ -95,7 +95,7 @@ jobs:
     name: Deploy, Scan & SRG Gate
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/sdlc-security-guardian'
 
     env:
       DT_TENANT_URL: https://fov31014.apps.dynatrace.com

@@ -1,6 +1,6 @@
 {
-  "title": "SRG Security Validation — srg-vulnerable-app",
-  "description": "Disparado pelo GitHub Actions após cada deploy. Avalia o SRG Guardian e bloqueia se houver CVEs críticos.",
+  "title": "SRG SDLC Security Validation — srg-vulnerable-app",
+  "description": "Disparado pelo GitHub Actions. Avalia o Guardian SDLC e bloqueia se houver vulnerabilidades HIGH.",
   "schemaVersion": 3,
   "trigger": {},
   "tasks": {
@@ -9,7 +9,7 @@
       "action": "dynatrace.site.reliability.guardian:validate-guardian-action",
       "active": true,
       "input": {
-        "executableId": "afe12e80-e74a-3e67-8eae-ab0db7d3fda1",
+        "executableId": "vu9U3hXa3q0AAAABADFhcHA6ZHluYXRyYWNlLnNpdGUucmVsaWFiaWxpdHkuZ3VhcmRpYW46Z3VhcmRpYW5zAAZ0ZW5hbnQABnRlbmFudAAkZDI0NTkzMzQtOTA5ZC0zYmYxLWIwYjAtY2RjZTc0ODBjY2Nivu9U3hXa3q0",
         "executionRequestParameters": {
           "timeframeStart": "now()-1h",
           "timeframeEnd": "now()"
