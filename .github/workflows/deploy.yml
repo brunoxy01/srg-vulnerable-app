@@ -324,6 +324,6 @@ jobs:
             echo "🔗 Validação: $(cat /tmp/dynatrace_validation_url.txt)"
           fi
           echo ""
-          echo "🔍 Revisar: ${DT_TENANT_URL}/ui/apps/dynatrace.classic.security.overview"
+          echo "🔍 Revisar: ${DT_TENANT_URL}/ui/apps/dynatrace.security.vulnerabilities"
           echo "🛠  Correção: atualize os pacotes em app/package.json e faça novo push"
 
